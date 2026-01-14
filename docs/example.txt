@@ -1,0 +1,202 @@
+bhoult:~/programming/ai-scrape$ ./research.rb -f "What are the lives of mexican resteraunt workers like?"
+Researching: What are the lives of mexican resteraunt workers like?
+
+Using Fireworks AI for LLM inference.
+
+Planning search strategy...
+Search queries to execute:
+  1. Mexican restaurant workers working conditions experiences USA
+  2. Mexican restaurant workers wages labor rights challenges
+  3. site:reddit.com Mexican restaurant worker stories experiences
+  4. site:x.com Mexican restaurant workers work life
+  5. Mexican restaurant kitchen workers daily life culture
+  6. immigration status Mexican restaurant workers employment
+
+Searching: Mexican restaurant workers working conditions experiences USA
+  Found 17 results
+Searching: Mexican restaurant workers wages labor rights challenges
+  Found 16 results
+Searching: site:reddit.com Mexican restaurant worker stories experiences
+  Found 10 results
+Searching: site:x.com Mexican restaurant workers work life
+  Found 9 results
+Searching: Mexican restaurant kitchen workers daily life culture
+  Found 17 results
+Searching: immigration status Mexican restaurant workers employment
+  Found 19 results
+
+Total unique results: 76
+Target: 10 articles with relevance >= 30
+
+--- Batch 1 ---
+Selecting sources from 76 remaining...
+Selected 8 sources to fetch.
+Fetching full page content...
+  Fetching: https://www.rsfjournal.org/content/4/1/115...
+  Fetching: https://www.reddit.com/r/starterpacks/comments/77tqa7/workin...
+  Fetching: https://whyy.org/articles/the-pandemic-labor-market-through-...
+  Fetching: https://www.dol.gov/newsroom/releases/whd/whd20231017-0...
+  Fetching: https://www.vice.com/en/article/why-i-want-to-honor-all-of-t...
+  Fetching: https://www.stlmag.com/dining/The-Invisible-Minority-Mexican...
+  Fetching: https://stanforddaily.com/2019/05/31/a-tale-of-two-kitchens-...
+  Fetching: https://online.ucpress.edu/phr/article/92/4/610/197583/Immig...
+Successfully fetched content from 8/8 pages.
+Cleaning content and scoring relevance...
+  Cleaning: https://whyy.org/articles/the-pandemic-labor-market-through-...
+  Cleaning: https://www.reddit.com/r/starterpacks/comments/77tqa7/workin...
+  Cleaning: https://www.vice.com/en/article/why-i-want-to-honor-all-of-t...
+  Cleaning: https://www.stlmag.com/dining/The-Invisible-Minority-Mexican...
+  Cleaning: https://stanforddaily.com/2019/05/31/a-tale-of-two-kitchens-...
+  Cleaning: https://online.ucpress.edu/phr/article/92/4/610/197583/Immig...
+  Cleaning: https://www.rsfjournal.org/content/4/1/115...
+  Cleaning: https://www.dol.gov/newsroom/releases/whd/whd20231017-0...
+Batch 1: 5 relevant, 3 discarded (< 30)
+Total relevant articles so far: 5/10 needed
+
+--- Batch 2 ---
+Selecting sources from 68 remaining...
+Selected 8 sources to fetch.
+Fetching full page content...
+  Fetching: https://www.facebook.com/groups/peoria.arizona.neighbors/pos...
+  Fetching: https://www.instagram.com/p/CPwlstusv70/...
+  Fetching: https://www.dol.gov/newsroom/releases/whd/whd20240507...
+  Fetching: https://www.reddit.com/r/antiwork/comments/1e1w2sr/mexican_r...
+  Fetching: https://unidosus.org/wp-content/uploads/2021/07/ch5_majoriss...
+  Fetching: https://www.reddit.com/r/Serverlife/comments/wxj8k8/being_th...
+  Fetching: https://www.quora.com/Why-are-there-so-many-Mexicans-working...
+  Fetching: https://www.restaurantbusinessonline.com/deportation-crackdo...
+  Retrying with Playwright: https://www.quora.com/Why-are-there-so-many-Mexica...
+  Retrying with Playwright: https://unidosus.org/wp-content/uploads/2021/07/ch...
+  scrape.js error for https://unidosus.org/wp-content/uploads/2021/07/ch5_majorissues.pdf: Error fetching URL: page.goto: Download is starting
+Successfully fetched content from 7/8 pages.
+Cleaning content and scoring relevance...
+  Cleaning: https://www.reddit.com/r/antiwork/comments/1e1w2sr/mexican_r...
+  Cleaning: https://www.reddit.com/r/Serverlife/comments/wxj8k8/being_th...
+  Cleaning: https://www.instagram.com/p/CPwlstusv70/...
+  Cleaning: https://www.facebook.com/groups/peoria.arizona.neighbors/pos...
+  Cleaning: https://www.dol.gov/newsroom/releases/whd/whd20240507...
+  Cleaning: https://www.quora.com/Why-are-there-so-many-Mexicans-working...
+  Cleaning: https://www.restaurantbusinessonline.com/deportation-crackdo...
+Batch 2: 2 relevant, 5 discarded (< 30)
+Total relevant articles so far: 7/10 needed
+
+--- Batch 3 ---
+Selecting sources from 60 remaining...
+Selected 7 sources to fetch.
+Fetching full page content...
+  Fetching: https://www.indeed.com/cmp/El-Rodeo-Mexican-Restaurant/revie...
+  Fetching: https://www.facebook.com/groups/430643886184859/posts/616863...
+  Fetching: http://nmpovertylaw.org/wp-content/uploads/2020/01/Factsheet...
+  Fetching: https://www.cohenmilstein.com/case-study/alvarez-v-chipotle-...
+  Fetching: https://www.draftncraft.com/restaurant-chain-fined-for-500k-...
+  Fetching: https://www.reddit.com/r/AskReddit/comments/kjo2rv/mexican_r...
+  Fetching: https://www.reddit.com/r/immigration/comments/1ia4wdw/nyt_as...
+  Retrying with Playwright: https://www.indeed.com/cmp/El-Rodeo-Mexican-Restau...
+  Retrying with Playwright: http://nmpovertylaw.org/wp-content/uploads/2020/01...
+  scrape.js error for http://nmpovertylaw.org/wp-content/uploads/2020/01/Factsheet-State-of-NM-Workers-2020-01-21.pdf: Error fetching URL: page.goto: Download is starting
+Successfully fetched content from 6/7 pages.
+Cleaning content and scoring relevance...
+  Cleaning: https://www.reddit.com/r/AskReddit/comments/kjo2rv/mexican_r...
+  Cleaning: https://www.reddit.com/r/immigration/comments/1ia4wdw/nyt_as...
+  Cleaning: https://www.cohenmilstein.com/case-study/alvarez-v-chipotle-...
+  Cleaning: https://www.facebook.com/groups/430643886184859/posts/616863...
+  Cleaning: https://www.draftncraft.com/restaurant-chain-fined-for-500k-...
+  Cleaning: https://www.indeed.com/cmp/El-Rodeo-Mexican-Restaurant/revie...
+Batch 3: 3 relevant, 3 discarded (< 30)
+Total relevant articles so far: 10/10 needed
+
+============================================================
+Finished fetching. Found 10 relevant articles.
+============================================================
+
+Analyzing sources with LLM...
+
+============================================================
+SOURCES (sorted by relevance)
+============================================================
+[1] Philly's immigrant restaurant workers on the labor market (Relevance: 95/100)
+    https://whyy.org/articles/the-pandemic-labor-market-through-the-eyes-of-phillys-immigrant-restaurant-workers/
+    Query: Mexican restaurant workers working conditions experiences USA
+[2] The Invisible Minority: Mexican Kitchen Workers Are Ubiquitous But ... (Relevance: 95/100)
+    https://www.stlmag.com/dining/The-Invisible-Minority-Mexican-Kitchen-Workers-Are-Ubiquitous-But-Unheralded/
+    Query: Mexican restaurant kitchen workers daily life culture
+[3] Bridging the Service Divide: Dual Labor Niches and Embedded ... (Relevance: 95/100)
+    https://www.rsfjournal.org/content/4/1/115
+    Query: Mexican restaurant workers working conditions experiences USA
+[4] Why I Want to Honor All of the Mexican Back-of-the-House Workers (Relevance: 92/100)
+    https://www.vice.com/en/article/why-i-want-to-honor-all-of-the-mexican-back-of-the-house-workers/
+    Query: Mexican restaurant kitchen workers daily life culture
+[5] What's happening with Pujol? Recently several ex employees ... (Relevance: 92/100)
+    https://www.instagram.com/p/CPwlstusv70/
+    Query: Mexican restaurant workers working conditions experiences USA
+[6] A deportation crackdown sows fear across the restaurant industry (Relevance: 92/100)
+    https://www.restaurantbusinessonline.com/deportation-crackdown-sows-fear-across-restaurant-industry
+    Query: immigration status Mexican restaurant workers employment
+[7] 'A Tale of Two Kitchens' celebrates welcoming kitchen culture built upon ... (Relevance: 88/100)
+    https://stanforddaily.com/2019/05/31/a-tale-of-two-kitchens-celebrates-welcoming-kitchen-culture-built-upon-dedication-of-migrant-workers/
+    Query: Mexican restaurant kitchen workers daily life culture
+[8] Alvarez v. Chipotle Mexican Grill, Inc. (Relevance: 65/100)
+    https://www.cohenmilstein.com/case-study/alvarez-v-chipotle-mexican-grill-inc/
+    Query: Mexican restaurant workers wages labor rights challenges
+[9] Restaurant Chain Fined for $500k in Violating the FLSA (Relevance: 55/100)
+    https://www.draftncraft.com/restaurant-chain-fined-for-500k-in-violating-the-flsa/
+    Query: Mexican restaurant workers wages labor rights challenges
+[10] As immigration Crackdown Looms, Restaurants Are Racked With Fear (Relevance: 45/100)
+    https://www.reddit.com/r/immigration/comments/1ia4wdw/nyt_as_immigration_crackdown_looms_restaurants/
+    Query: immigration status Mexican restaurant workers employment
+
+============================================================
+RESEARCH FINDINGS
+============================================================
+# The Lives of Mexican Restaurant Workers
+
+Based on the provided sources, the lives of Mexican restaurant workers in the United States are characterized by dedication, resilience, significant challenges, and complex dynamics shaped by immigration status, industry conditions, and systemic barriers.
+
+## Work Conditions and Daily Realities
+
+Mexican immigrant workers, particularly men, form the backbone of back-of-house restaurant labor across the country, working in jobs such as cooking, dishwashing, and food preparation [3]. Their work demands physical strength, knife skills, and endurance to survive 10-12 hour shifts in hot, loud, and often dangerous conditions [3]. The kitchen culture often includes profanity, shouting, sexual jokes, and even physical violence—contrasting sharply with the hospitality focus of the front of the house [3].
+
+Many workers experience "job creep," where they are hired for one position but end up performing multiple roles without additional compensation. As Eréndira Zamacona, a prep cook at a Mexican restaurant, described: "They hired me as a prep cook, but I basically end up doing everything there... I end up washing dishes. I end up preparing food... so it's not just one job that I do" [1]. This drove her out of the industry entirely and into domestic work [1].
+
+## Wage Struggles and Economic Vulnerability
+
+Back-of-house workers do not earn tips but make slightly higher hourly wages (approximately $9 to $15), with limited job benefits, little employment security, and usually no advancement opportunities [3]. Most back-of-house restaurant work is seen as dead-end labor—a quintessentially "bad" job in the service industry [3].
+
+The wage disparity between front-of-house and back-of-house workers creates significant tension. Mexican cooks perceive white coworkers in the front of the house as "lazy gringos who did not work very hard for the money they earned" [3]. While servers could earn substantially more (approximately $22/hour average), back-of-house workers earned minimum wage [3].
+
+Undocumented workers are particularly vulnerable to exploitation, as they have little recourse to recoup wages without exposing their status [2]. A chain of San Jose Mexican restaurants in North Carolina was found paying workers less than the federal minimum wage of $7.25 per hour and failing to pay overtime [9]. The Department of Labor noted that "the restaurant industry employs some of our country's lowest-paid workers, who are often vulnerable to disparate treatment and wage violations" [9].
+
+## Health Insurance and Workplace Injuries
+
+Most Mexican restaurant workers lack health insurance entirely [2]. When 23-year-old "T" suffered a knife injury on the job, leaving a large scar at the base of his thumb, he paid $2,000 in cash (nearly equal to his border crossing cost) at an emergency room for treatment [2]. Similarly, "G," a 40-year-old chef, does not have health insurance and visits the ER when sick or injured [2].
+
+## Immigration Status and Fear
+
+Immigrant workers face constant fear of deportation, which has intensified under recent immigration crackdowns. According to the National Restaurant Association, immigrants make up an estimated 22% of the food industry workforce, and an estimated 36% of restaurant owners are immigrants [6]. The climate of fear is having a deep impact on the industry across the country.
+
+Toni Torres, co-owner of La Usuluteca in Los Angeles, explained: "They do not care if you are legal, if you have papers or if your immigration situation is in order. Just by your appearance, they go after you. If you look Latin, you're afraid to go out" [6]. Undocumented immigrant workers have been ineligible for government assistance provided during the pandemic, forcing many to depend on community support to survive [1].
+
+## Social Marginalization and Cultural Dynamics
+
+Mexican restaurant workers experience significant social distance from front-of-house workers. Many white servers don't know the names of their Mexican coworkers preparing the food, while Mexican cooks often don't know who is serving the food they prepare [3]. Front-of-house workers often ignore back-of-house workers entirely, with one waitress stating: "There are so many of them... Besides, all I care about is that the food comes out quickly with no errors" [3].
+
+There's also the complete elision of Mexican history, culture, and identity, and the appropriation of Mexican cuisine by the dominant majority [2]. As one worker noted, Mexican cooks working at a Greek restaurant might know more about Greek culture than their own Mexican culture [4].
+
+## Ambition and Resilience
+
+Despite these challenges, many Mexican restaurant workers demonstrate remarkable ambition and resilience. They often work multiple jobs, aspire to own their own restaurants someday, and bring strong work ethics from their upbringing [2][4]. As one chef noted, "All of the Mexican people that I've met in the US work extremely hard and they are very ambitious, working several cooking jobs at the same time" [4].
+
+Many workers send money to family in Mexico and see their work as temporary sacrifice for future opportunities [2]. The 40-year-old "G" arrived in the country 25 years ago, crossed hidden in the backs of trucks, started as a dishwasher, and has since risen to chef level and owns several homes [2]. He now wants to open his own Mexican restaurant [2].
+
+## Organizing and Changing Conditions
+
+Some workers are fighting back through organizing. Members of "El comité de trabajador@s inmigrantes" (the Immigrant Workers Committee) have successfully campaigned for better wages, with one Latina prep cook achieving a raise from $15 to $16/hour after collective action [1]. Similarly, some business owners like Juan Carlos Romero of Philly Tacos are working to improve conditions, ensuring everyone on his small staff makes at least $15/hour [1].
+
+However, worker organizer Natalia Nicastro noted: "There's not a shortage of workers. It's really related to what conditions the restaurant industry is really offering" [1]. Construction offers more predictable hours and better pay, and many people are unwilling to return to the late nights and grinding pace of the restaurant industry [1].
+
+As Eréndira Zamacona put it, the restaurant industry needs to fix this "culture of exploitation" [1]. The documentary "A Tale of Two Kitchens" offers one alternative model, where restaurants embrace people from all backgrounds, including those with criminal histories, and pool tips at the end of the night instead of earning individual tips—embodying a work culture of togetherness [7]. As one worker stated: "I think of Contramar as my home... We think of the restaurant as part of ourselves, as part of the essence, as part of our lives. And we take a lot of pride in what we do" [7].
+
+============================================================
+Results saved to:
+  /home/bhoult/programming/ai-scrape/logs/SOURCES.txt
+  /home/bhoult/programming/ai-scrape/logs/RESEARCH_FINDINGS.txt
