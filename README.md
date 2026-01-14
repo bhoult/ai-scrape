@@ -20,6 +20,29 @@ An AI research assistant that searches the web, fetches and processes content, t
 - Final synthesis with source citations
 - **Supports both local LLM (LM Studio) and Fireworks AI (MiniMax-M2)**
 
+#### How It Works
+
+1. **Search Planning**: The LLM analyzes your question and generates targeted search queries, including site-specific searches for Reddit, Facebook, and X/Twitter to capture social media discussions.
+
+2. **Web Search**: Each query is executed against SearXNG (a privacy-respecting metasearch engine) which aggregates results from Google, Bing, and DuckDuckGo.
+
+3. **URL Selection**: The LLM reviews all search results and selects the most promising URLs to fetch, prioritizing diverse and authoritative sources.
+
+4. **Content Fetching**: Pages are fetched in parallel using HTTP requests, with Playwright as a fallback for JavaScript-heavy sites. Raw content is logged for debugging.
+
+5. **Content Cleaning**: Each page's content is sent to the LLM to:
+   - Remove irrelevant content (ads, navigation, boilerplate)
+   - Format the remaining content cleanly
+   - Score relevance to the question (1-100)
+
+6. **Relevance Filtering**: Articles scoring below `MINIMUM_RELEVANCE` are discarded and moved to the `irrelevant/` log folder.
+
+7. **Iterative Fetching**: Steps 3-6 repeat in batches until `MINIMUM_RELEVANT_ARTICLES` relevant articles are collected, or all search results are exhausted.
+
+8. **Research Synthesis**: The LLM analyzes all relevant articles together and produces a comprehensive answer with source citations.
+
+9. **Output**: Results are saved to `SOURCES.txt` (with relevance scores and search queries) and `RESEARCH_FINDINGS.txt` (the final synthesized answer).
+
 #### Usage
 
 ```bash
@@ -45,7 +68,7 @@ An AI research assistant that searches the web, fetches and processes content, t
 | `LM_STUDIO_APP` | `~/Downloads/LM-Studio-*.AppImage` | Path to LM Studio app |
 | `SCRAPE_JS_PATH` | `./scrape.js` | Path to Playwright scraper |
 | `LOG_DIR` | `./logs` | Directory for log files |
-| `NUM_SEARCH_QUERIES` | `4` | Number of search queries to generate |
+| `NUM_SEARCH_QUERIES` | `6` | Number of search queries to generate |
 | `MINIMUM_RELEVANCE` | `30` | Discard articles below this score (1-100) |
 | `MINIMUM_RELEVANT_ARTICLES` | `10` | Keep fetching until this many relevant articles |
 
@@ -69,7 +92,8 @@ MINIMUM_RELEVANCE=40 ./research.rb --fireworks "your question"
 #### Output
 
 Results are saved to the `logs/` directory:
-- `SOURCES.txt` - List of sources with relevance scores
+- `SEARCH_QUERIES.txt` - Generated search queries
+- `SOURCES.txt` - List of sources with relevance scores and search queries
 - `RESEARCH_FINDINGS.txt` - Final synthesized answer
 - `cleaned/` - Processed content for relevant articles
 - `irrelevant/` - Discarded low-relevance articles
