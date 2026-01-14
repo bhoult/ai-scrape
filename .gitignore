@@ -1,0 +1,18 @@
+# Logs
+logs/
+
+# Keys
+*.key
+
+# Dependencies
+node_modules/
+
+# Test files
+test.txt
+test.html
+test.md
+test-*.md
+cleaned.md
+
+# SearXNG config (contains secrets)
+searxng/
