@@ -48,6 +48,7 @@ MINIMUM_RELEVANT_ARTICLES = ENV.fetch('MINIMUM_RELEVANT_ARTICLES', '10').to_i  #
 FIREWORKS_API_URL = 'https://api.fireworks.ai/inference/v1/chat/completions'
 FIREWORKS_MODEL = 'accounts/fireworks/models/minimax-m2p1'
 FIREWORKS_API_KEY_FILE = File.expand_path('fireworks_api.key', __dir__)
+FIREWORKS_MAX_PARALLEL = 2  # Lower parallelism to avoid rate limits
 
 # Global flag for using Fireworks AI instead of local LLM
 $use_fireworks = false
@@ -680,7 +681,10 @@ def process_results_parallel(results, question)
   processed = []
   mutex = Mutex.new
 
-  threads = MAX_PARALLEL_FETCHES.times.map do
+  # Use lower parallelism for Fireworks to avoid rate limits
+  num_threads = $use_fireworks ? FIREWORKS_MAX_PARALLEL : MAX_PARALLEL_FETCHES
+
+  threads = num_threads.times.map do
     Thread.new do
       while (result = queue.pop(true) rescue nil)
         next unless result[:full_content]
