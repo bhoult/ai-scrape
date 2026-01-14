@@ -37,6 +37,11 @@ FETCH_TIMEOUT = 20           # Seconds to wait for page fetch
 MAX_PARALLEL_FETCHES = 10    # Concurrent fetches
 
 # ==============================================================================
+# CONFIGURATION - Search
+# ==============================================================================
+NUM_SEARCH_QUERIES = ENV.fetch('NUM_SEARCH_QUERIES', '6').to_i  # Number of search queries to generate
+
+# ==============================================================================
 # CONFIGURATION - Relevance Filtering
 # ==============================================================================
 MINIMUM_RELEVANCE = ENV.fetch('MINIMUM_RELEVANCE', '30').to_i        # Discard articles below this score (1-100)
@@ -118,10 +123,17 @@ PROMPT
 PLAN_SEARCHES_SYSTEM_PROMPT = <<~PROMPT
   You are a research planning assistant. Given a user's question, determine the best web search queries to find comprehensive information.
 
-  Respond with ONLY a JSON array of search query strings, nothing else. Generate 3-5 targeted search queries that will cover different aspects of the question.
+  Generate exactly %{num_queries} targeted search queries that will cover different aspects of the question.
+
+  IMPORTANT: Include at least 2 site-specific queries to capture social media discussions and personal experiences:
+  - Use "site:reddit.com" for Reddit discussions
+  - Use "site:facebook.com" for Facebook posts
+  - Use "site:x.com" or "site:twitter.com" for X/Twitter posts
+
+  Respond with ONLY a JSON array of search query strings, nothing else.
 
   Example response format:
-  ["search query 1", "search query 2", "search query 3"]
+  ["general search query", "site:reddit.com topic", "site:facebook.com topic", "another search angle"]
 PROMPT
 
 PLAN_SEARCHES_USER_PROMPT = "Question: %{question}\n\nWhat search queries should I use to research this thoroughly?"
@@ -155,7 +167,7 @@ Dir.mkdir(LOG_DIR) unless Dir.exist?(LOG_DIR)
 end
 # Clear LLM prompt logs and results files from root log directory
 Dir.glob(File.join(LOG_DIR, '*_llm_prompt.txt')).each { |f| File.delete(f) }
-%w[SOURCES.txt RESEARCH_FINDINGS.txt].each do |filename|
+%w[SOURCES.txt RESEARCH_FINDINGS.txt SEARCH_QUERIES.txt].each do |filename|
   filepath = File.join(LOG_DIR, filename)
   File.delete(filepath) if File.exist?(filepath)
 end
@@ -219,7 +231,7 @@ rescue StandardError => e
 end
 
 # Log both original and LLM-cleaned content for comparison
-def log_cleaned_content(url, title, original_content, cleaned_content, relevance_score)
+def log_cleaned_content(url, title, original_content, cleaned_content, relevance_score, search_query)
   return if original_content.nil? || original_content.empty?
 
   log_subdir = File.join(LOG_DIR, 'cleaned')
@@ -233,6 +245,7 @@ def log_cleaned_content(url, title, original_content, cleaned_content, relevance
   File.open(filepath, 'w') do |f|
     f.puts "URL: #{url}"
     f.puts "Title: #{title}"
+    f.puts "Search Query: #{search_query}"
     f.puts "Timestamp: #{Time.now.iso8601}"
     f.puts "Relevance Score: #{relevance_score}/100"
     f.puts "Original Length: #{original_content.length} chars"
@@ -659,7 +672,8 @@ def clean_and_score_content(result, question)
     result[:title],
     result[:full_content],
     cleaned_content,
-    relevance_score
+    relevance_score,
+    result[:search_query]
   )
 
   result.merge(
@@ -813,7 +827,7 @@ rescue StandardError => e
 end
 
 # Send a prompt to Fireworks AI and return the response
-def query_llm_fireworks(prompt, system_prompt: nil)
+def query_llm_fireworks(prompt, system_prompt: nil, max_retries: 5)
   unless File.exist?(FIREWORKS_API_KEY_FILE)
     warn "Fireworks API key file not found: #{FIREWORKS_API_KEY_FILE}"
     return nil
@@ -847,21 +861,38 @@ def query_llm_fireworks(prompt, system_prompt: nil)
   request['Authorization'] = "Bearer #{api_key}"
   request.body = body.to_json
 
-  response = http.request(request)
+  retries = 0
+  loop do
+    response = http.request(request)
 
-  unless response.is_a?(Net::HTTPSuccess)
-    warn "Fireworks API request failed: #{response.code} #{response.message}"
-    warn response.body if response.body
-    return nil
+    # Handle rate limiting with exponential backoff
+    if response.code == '429'
+      retries += 1
+      if retries <= max_retries
+        wait_time = 2 ** retries  # 2, 4, 8, 16, 32 seconds
+        warn "Rate limited (429), retrying in #{wait_time}s (attempt #{retries}/#{max_retries})..."
+        sleep(wait_time)
+        next
+      else
+        warn "Fireworks API rate limit exceeded after #{max_retries} retries"
+        return nil
+      end
+    end
+
+    unless response.is_a?(Net::HTTPSuccess)
+      warn "Fireworks API request failed: #{response.code} #{response.message}"
+      warn response.body if response.body
+      return nil
+    end
+
+    data = JSON.parse(response.body)
+    if data['error']
+      warn "Fireworks API error: #{data['error']}"
+      return nil
+    end
+
+    return data.dig('choices', 0, 'message', 'content')
   end
-
-  data = JSON.parse(response.body)
-  if data['error']
-    warn "Fireworks API error: #{data['error']}"
-    return nil
-  end
-
-  data.dig('choices', 0, 'message', 'content')
 rescue StandardError => e
   warn "Fireworks API error: #{e.message}"
   nil
@@ -873,8 +904,9 @@ end
 
 # Use LLM to generate effective search queries for a research question
 def plan_searches(question)
+  system_prompt = format(PLAN_SEARCHES_SYSTEM_PROMPT, num_queries: NUM_SEARCH_QUERIES)
   user_prompt = format(PLAN_SEARCHES_USER_PROMPT, question: question)
-  response = query_llm(user_prompt, system_prompt: PLAN_SEARCHES_SYSTEM_PROMPT)
+  response = query_llm(user_prompt, system_prompt: system_prompt)
   return nil unless response
 
   # Extract JSON array from response
@@ -915,12 +947,18 @@ def research(question)
   search_queries.each_with_index { |q, i| puts "  #{i + 1}. #{q}" }
   puts
 
+  # Log search queries
+  queries_log = "Question: #{question}\n\n" + search_queries.each_with_index.map { |q, i| "#{i + 1}. #{q}" }.join("\n")
+  File.write(File.join(LOG_DIR, 'SEARCH_QUERIES.txt'), queries_log)
+
   # Step 2: Execute all searches
   all_results = []
   search_queries.each do |query|
     puts "Searching: #{query}"
     results = search_web(query)
     puts "  Found #{results.length} results"
+    # Tag each result with the query that found it
+    results.each { |r| r[:search_query] = query }
     all_results.concat(results)
   end
 
@@ -1011,7 +1049,7 @@ def research(question)
   if answer
     # Build sources text
     sources_text = relevant_results.each_with_index.map do |r, i|
-      "[#{i + 1}] #{r[:title]} (Relevance: #{r[:relevance_score]}/100)\n    #{r[:url]}"
+      "[#{i + 1}] #{r[:title]} (Relevance: #{r[:relevance_score]}/100)\n    #{r[:url]}\n    Query: #{r[:search_query]}"
     end.join("\n")
 
     # Save to files

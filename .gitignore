@@ -16,3 +16,6 @@ cleaned.md
 
 # SearXNG config (contains secrets)
 searxng/
+
+# Binaries
+firectl

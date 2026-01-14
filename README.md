@@ -45,6 +45,7 @@ An AI research assistant that searches the web, fetches and processes content, t
 | `LM_STUDIO_APP` | `~/Downloads/LM-Studio-*.AppImage` | Path to LM Studio app |
 | `SCRAPE_JS_PATH` | `./scrape.js` | Path to Playwright scraper |
 | `LOG_DIR` | `./logs` | Directory for log files |
+| `NUM_SEARCH_QUERIES` | `4` | Number of search queries to generate |
 | `MINIMUM_RELEVANCE` | `30` | Discard articles below this score (1-100) |
 | `MINIMUM_RELEVANT_ARTICLES` | `10` | Keep fetching until this many relevant articles |
 
