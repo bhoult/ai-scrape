@@ -43,6 +43,16 @@ MINIMUM_RELEVANCE = ENV.fetch('MINIMUM_RELEVANCE', '30').to_i        # Discard a
 MINIMUM_RELEVANT_ARTICLES = ENV.fetch('MINIMUM_RELEVANT_ARTICLES', '10').to_i  # Keep fetching until we have this many
 
 # ==============================================================================
+# CONFIGURATION - Fireworks AI (alternative to local LLM)
+# ==============================================================================
+FIREWORKS_API_URL = 'https://api.fireworks.ai/inference/v1/chat/completions'
+FIREWORKS_MODEL = 'accounts/fireworks/models/minimax-m2p1'
+FIREWORKS_API_KEY_FILE = File.expand_path('fireworks_api.key', __dir__)
+
+# Global flag for using Fireworks AI instead of local LLM
+$use_fireworks = false
+
+# ==============================================================================
 # LLM PROMPTS
 # ==============================================================================
 
@@ -378,7 +388,7 @@ def start_lm_studio
   false
 end
 
-# Ensure both SearXNG and LM Studio are running
+# Ensure required services are running (SearXNG always, LM Studio only if not using Fireworks)
 def ensure_services_running
   services_ok = true
 
@@ -386,8 +396,17 @@ def ensure_services_running
     services_ok = start_searxng && services_ok
   end
 
-  unless service_available?(LLM_URL)
-    services_ok = start_lm_studio && services_ok
+  # Skip LM Studio check if using Fireworks AI
+  if $use_fireworks
+    puts "Using Fireworks AI for LLM inference."
+    unless File.exist?(FIREWORKS_API_KEY_FILE)
+      warn "Fireworks API key file not found: #{FIREWORKS_API_KEY_FILE}"
+      return false
+    end
+  else
+    unless service_available?(LLM_URL)
+      services_ok = start_lm_studio && services_ok
+    end
   end
 
   services_ok
@@ -744,8 +763,17 @@ def format_search_results(results, include_full_content: false)
   end.join("\n")
 end
 
-# Send a prompt to the local LLM and return the response
+# Send a prompt to the LLM (local or Fireworks) and return the response
 def query_llm(prompt, system_prompt: nil)
+  if $use_fireworks
+    query_llm_fireworks(prompt, system_prompt: system_prompt)
+  else
+    query_llm_local(prompt, system_prompt: system_prompt)
+  end
+end
+
+# Send a prompt to the local LLM and return the response
+def query_llm_local(prompt, system_prompt: nil)
   uri = URI(LLM_URL)
 
   messages = []
@@ -756,7 +784,7 @@ def query_llm(prompt, system_prompt: nil)
     model: LLM_MODEL,
     messages: messages,
     temperature: 0.7,
-    max_tokens: 34000 #2048
+    max_tokens: 34000
   }
 
   http = Net::HTTP.new(uri.host, uri.port)
@@ -777,6 +805,61 @@ def query_llm(prompt, system_prompt: nil)
   data.dig('choices', 0, 'message', 'content')
 rescue StandardError => e
   warn "LLM error: #{e.message}"
+  nil
+end
+
+# Send a prompt to Fireworks AI and return the response
+def query_llm_fireworks(prompt, system_prompt: nil)
+  unless File.exist?(FIREWORKS_API_KEY_FILE)
+    warn "Fireworks API key file not found: #{FIREWORKS_API_KEY_FILE}"
+    return nil
+  end
+
+  api_key = File.read(FIREWORKS_API_KEY_FILE).strip
+  uri = URI(FIREWORKS_API_URL)
+
+  messages = []
+  messages << { role: 'system', content: system_prompt } if system_prompt
+  messages << { role: 'user', content: prompt }
+
+  body = {
+    model: FIREWORKS_MODEL,
+    messages: messages,
+    temperature: 0.6,
+    max_tokens: 4096,
+    top_p: 1,
+    top_k: 40,
+    presence_penalty: 0,
+    frequency_penalty: 0
+  }
+
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  http.read_timeout = 120
+
+  request = Net::HTTP::Post.new(uri)
+  request['Content-Type'] = 'application/json'
+  request['Accept'] = 'application/json'
+  request['Authorization'] = "Bearer #{api_key}"
+  request.body = body.to_json
+
+  response = http.request(request)
+
+  unless response.is_a?(Net::HTTPSuccess)
+    warn "Fireworks API request failed: #{response.code} #{response.message}"
+    warn response.body if response.body
+    return nil
+  end
+
+  data = JSON.parse(response.body)
+  if data['error']
+    warn "Fireworks API error: #{data['error']}"
+    return nil
+  end
+
+  data.dig('choices', 0, 'message', 'content')
+rescue StandardError => e
+  warn "Fireworks API error: #{e.message}"
   nil
 end
 
@@ -952,8 +1035,20 @@ end
 # ==============================================================================
 # MAIN EXECUTION
 # ==============================================================================
-if ARGV.empty?
-  puts "Usage: #{$PROGRAM_NAME} <question>"
+
+# Parse command line arguments
+args = ARGV.dup
+if args.include?('--fireworks') || args.include?('-f')
+  $use_fireworks = true
+  args.delete('--fireworks')
+  args.delete('-f')
+end
+
+if args.empty? || args.first&.start_with?('-')
+  puts "Usage: #{$PROGRAM_NAME} [--fireworks] <question>"
+  puts ""
+  puts "Options:"
+  puts "  --fireworks, -f          Use Fireworks AI (MiniMax-M2) instead of local LLM"
   puts ""
   puts "Environment variables:"
   puts "  SEARXNG_URL              - SearXNG instance URL (default: http://localhost:8080)"
@@ -962,10 +1057,11 @@ if ARGV.empty?
   puts "  MINIMUM_RELEVANCE        - Discard articles below this score, 1-100 (default: 30)"
   puts "  MINIMUM_RELEVANT_ARTICLES - Keep fetching until this many relevant articles (default: 3)"
   puts ""
-  puts "Example:"
+  puts "Examples:"
   puts "  #{$PROGRAM_NAME} \"What are the latest developments in quantum computing?\""
+  puts "  #{$PROGRAM_NAME} --fireworks \"Best practices for Ruby error handling\""
   exit 1
 end
 
-question = ARGV.join(' ')
+question = args.join(' ')
 research(question)

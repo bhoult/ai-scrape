@@ -6,7 +6,7 @@ A collection of tools for web scraping and AI-powered research synthesis.
 
 ### research.rb
 
-An AI research assistant that searches the web, fetches and processes content, then synthesizes research findings using a local LLM.
+An AI research assistant that searches the web, fetches and processes content, then synthesizes research findings using an LLM.
 
 #### Features
 
@@ -18,12 +18,19 @@ An AI research assistant that searches the web, fetches and processes content, t
 - Iterative fetching until minimum relevant articles found
 - Comprehensive logging of all stages
 - Final synthesis with source citations
+- **Supports both local LLM (LM Studio) and Fireworks AI (MiniMax-M2)**
 
 #### Usage
 
 ```bash
-./research.rb "your research question here"
+./research.rb [--fireworks] "your research question here"
 ```
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--fireworks`, `-f` | Use Fireworks AI (MiniMax-M2) instead of local LLM |
 
 #### Environment Variables
 
@@ -41,14 +48,21 @@ An AI research assistant that searches the web, fetches and processes content, t
 | `MINIMUM_RELEVANCE` | `30` | Discard articles below this score (1-100) |
 | `MINIMUM_RELEVANT_ARTICLES` | `10` | Keep fetching until this many relevant articles |
 
-#### Example
+#### Examples
 
 ```bash
-# Basic usage
+# Basic usage (local LLM via LM Studio)
 ./research.rb "What are the best practices for Ruby error handling?"
+
+# Use Fireworks AI instead of local LLM
+./research.rb --fireworks "What are the best practices for Ruby error handling?"
+./research.rb -f "your question"
 
 # With custom thresholds
 MINIMUM_RELEVANCE=50 MINIMUM_RELEVANT_ARTICLES=5 ./research.rb "your question"
+
+# Fireworks AI with custom thresholds
+MINIMUM_RELEVANCE=40 ./research.rb --fireworks "your question"
 ```
 
 #### Output
@@ -115,7 +129,7 @@ node scrape.js ./saved-page.html minimax
 
 #### API Key
 
-For Fireworks AI models (`minimax`, `deepseek`), create a file named `fireworks_api.key` in the same directory containing your API key.
+For Fireworks AI models, create a file named `fireworks_api.key` in the project directory containing your API key. This file is used by both `scrape.js` (for `minimax`/`deepseek` models) and `research.rb` (when using `--fireworks` flag).
 
 ---
 
@@ -128,7 +142,8 @@ A utility script for formatting content (see source for details).
 - Ruby 3.x (for research.rb)
 - Node.js 18+ (for scrape.js)
 - Docker (for SearXNG)
-- LM Studio or compatible local LLM server
+- LM Studio or compatible local LLM server (not required if using `--fireworks`)
+- Fireworks AI API key (only if using `--fireworks` flag or Fireworks models in scrape.js)
 
 ### Node Dependencies
 
