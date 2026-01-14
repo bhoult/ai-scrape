@@ -1084,6 +1084,17 @@ if args.include?('--fireworks') || args.include?('-f')
   $use_fireworks = true
   args.delete('--fireworks')
   args.delete('-f')
+
+  # Verify Fireworks API key exists
+  unless File.exist?(FIREWORKS_API_KEY_FILE)
+    warn "Error: Fireworks API key file not found: #{FIREWORKS_API_KEY_FILE}"
+    warn ""
+    warn "To use Fireworks AI, create a file named 'fireworks_api.key' in the project"
+    warn "directory containing your Fireworks API key."
+    warn ""
+    warn "Get your API key at: https://fireworks.ai/api-keys"
+    exit 1
+  end
 end
 
 if args.empty? || args.first&.start_with?('-')
