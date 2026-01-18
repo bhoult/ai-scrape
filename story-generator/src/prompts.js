@@ -65,8 +65,14 @@ Respond with a JSON object containing:
         "age": "approximate age or range",
         "height": "short/average/tall or specific",
         "build": "slim/average/heavy/muscular",
-        "hair": "color and style",
-        "distinguishing": "notable features, scars, etc."
+        "hairColor": "hair color",
+        "hairLength": "bald/short/medium/long",
+        "hairStyle": "straight/curly/wavy/tied back/etc.",
+        "facialHair": "none/stubble/short beard/long beard/mustache/etc.",
+        "eyeColor": "eye color",
+        "skinTone": "pale/fair/tan/olive/brown/dark",
+        "face": "face shape or notable facial features",
+        "distinguishing": "scars, tattoos, glasses, other notable features"
       },
       "clothing": "Current clothing and accessories",
       "personality": "Key personality traits",
@@ -96,12 +102,17 @@ export function playerActionPrompt(character, worldState, recentHistory) {
 
   const loc = worldState.currentLocation || {};
   const appearance = character.appearance || {};
+  const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
   const appearanceStr = [
     appearance.gender,
     appearance.age,
+    appearance.skinTone ? `${appearance.skinTone} skin` : null,
     appearance.height,
     appearance.build,
-    appearance.hair ? `${appearance.hair} hair` : null,
+    hairDesc ? `${hairDesc} hair` : null,
+    appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
+    appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+    appearance.face,
     appearance.distinguishing
   ].filter(Boolean).join(', ') || 'Unknown';
   const inventory = safeJoin(character.inventory) || 'Nothing';
@@ -155,12 +166,17 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
 
   const charactersText = worldState.characters.map(c => {
     const appearance = c.appearance || {};
+    const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
     const appearanceStr = [
       appearance.gender,
       appearance.age,
+      appearance.skinTone ? `${appearance.skinTone} skin` : null,
       appearance.height,
       appearance.build,
-      appearance.hair ? `${appearance.hair} hair` : null,
+      hairDesc ? `${hairDesc} hair` : null,
+      appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
+      appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+      appearance.face,
       appearance.distinguishing
     ].filter(Boolean).join(', ');
     return `- ${c.name}: ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}, inventory: [${safeJoin(c.inventory) || 'nothing'}]`;
@@ -209,7 +225,14 @@ Resolve these actions realistically. Consider:
 - Environmental effects and discoveries
 - Natural consequences of actions
 - How this advances (or complicates) the story goal
-- How much time passes (typically 15-60 minutes per turn, but can vary)
+
+TIME TRACKING (CRITICAL):
+- Time must ALWAYS advance forward from the current time shown above
+- Estimate realistic duration for the actions taken (typically 10-60 minutes per turn)
+- Quick conversations/simple actions: 10-15 minutes
+- Moderate activities (searching, crafting, short travel): 20-40 minutes
+- Extended activities (long travel, complex tasks, rest): 1-4 hours
+- When hour reaches 24, increment day and reset hour to 0
 
 Respond with JSON:
 {
@@ -218,7 +241,8 @@ Respond with JSON:
   "time": {
     "day": 1,
     "hour": 9,
-    "minute": 30
+    "minute": 30,
+    "_comment": "NEW time after this turn's actions (must be later than current time above)"
   },
   "arcUpdates": {
     "narrativeArc": "Updated phase of the story (e.g., 'Rising action - characters face first major obstacle')",

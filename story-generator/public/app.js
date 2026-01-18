@@ -15,6 +15,10 @@ const menuCloseBtn = document.getElementById('menu-close-btn');
 const storyList = document.getElementById('story-list');
 const generateImagesCheckbox = document.getElementById('generate-images-checkbox');
 const turnCountInput = document.getElementById('turn-count');
+const storyViewer = document.getElementById('story-viewer');
+const storyViewerTitle = document.getElementById('story-viewer-title');
+const storyViewerBody = document.getElementById('story-viewer-body');
+const viewerCloseBtn = document.getElementById('viewer-close-btn');
 
 let currentTurn = 0;
 let currentStoryId = null;
@@ -188,12 +192,17 @@ function renderWorldState(state) {
     html += '<div class="characters-list"><strong>Characters:</strong>';
     for (const char of state.characters) {
       const appearance = char.appearance || {};
+      const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
       const appearanceParts = [
         appearance.gender,
         appearance.age,
+        appearance.skinTone ? `${appearance.skinTone} skin` : null,
         appearance.height,
         appearance.build,
-        appearance.hair ? `${appearance.hair} hair` : null,
+        hairDesc ? `${hairDesc} hair` : null,
+        appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
+        appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+        appearance.face,
         appearance.distinguishing
       ].filter(Boolean);
       const appearanceStr = appearanceParts.length > 0 ? appearanceParts.join(', ') : 'No description';
@@ -398,13 +407,26 @@ async function loadStoryList() {
             ${timeStr ? `<span>${timeStr}</span>` : ''}
             <span>Updated: ${date}</span>
           </div>
+          <div class="story-item-actions">
+            <button class="story-view-btn" data-id="${story.id}">View</button>
+            <button class="story-continue-btn" data-id="${story.id}">Continue</button>
+          </div>
         </div>
       `;
     }).join('');
 
     // Add click handlers
-    storyList.querySelectorAll('.story-item').forEach(item => {
-      item.addEventListener('click', () => loadStory(item.dataset.id));
+    storyList.querySelectorAll('.story-view-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        viewStory(btn.dataset.id);
+      });
+    });
+    storyList.querySelectorAll('.story-continue-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        loadStory(btn.dataset.id);
+      });
     });
   } catch (error) {
     storyList.innerHTML = '<p class="placeholder">Error loading stories</p>';
@@ -502,6 +524,123 @@ menuBtn.addEventListener('click', openStoryMenu);
 menuCloseBtn.addEventListener('click', closeStoryMenu);
 storyMenu.addEventListener('click', (e) => {
   if (e.target === storyMenu) closeStoryMenu();
+});
+
+// Story viewer functions
+async function viewStory(storyId) {
+  storyMenu.classList.add('hidden');
+  showLoading();
+
+  try {
+    const response = await fetch(`/stories/${storyId}/story.md`);
+    if (!response.ok) {
+      throw new Error('Story file not found');
+    }
+    const markdown = await response.text();
+
+    // Parse and render markdown
+    const html = renderMarkdownStory(markdown, storyId);
+    storyViewerBody.innerHTML = html;
+
+    // Extract title from first h1
+    const titleMatch = markdown.match(/^# (.+)$/m);
+    storyViewerTitle.textContent = titleMatch ? titleMatch[1] : 'Story';
+
+    // Add click handlers for images
+    storyViewerBody.querySelectorAll('.story-image-container img').forEach(img => {
+      img.addEventListener('click', () => showImageOverlay(img.src));
+    });
+
+    storyViewer.classList.remove('hidden');
+  } catch (error) {
+    alert('Error loading story: ' + error.message);
+    console.error(error);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderMarkdownStory(markdown, storyId) {
+  const lines = markdown.split('\n');
+  let html = '';
+  let sectionHeader = '';
+  let sectionImage = '';
+  let sectionText = [];
+
+  function flushSection() {
+    if (sectionHeader || sectionImage || sectionText.length > 0) {
+      html += '<div class="section">';
+      if (sectionHeader) {
+        html += sectionHeader;
+      }
+      // Image comes first for float wrapping
+      if (sectionImage) {
+        html += sectionImage;
+      }
+      for (const text of sectionText) {
+        html += text;
+      }
+      html += '</div>';
+    }
+    sectionHeader = '';
+    sectionImage = '';
+    sectionText = [];
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // H1 - Title
+    if (line.startsWith('# ')) {
+      html += `<h1>${escapeHtml(line.substring(2))}</h1>`;
+      continue;
+    }
+
+    // H2 - Turn headers (start new section)
+    if (line.startsWith('## ')) {
+      flushSection();
+      sectionHeader = `<h2>${escapeHtml(line.substring(3))}</h2>`;
+      continue;
+    }
+
+    // Image
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      const alt = imageMatch[1];
+      let src = imageMatch[2];
+      // Fix relative path
+      if (!src.startsWith('/') && !src.startsWith('http')) {
+        src = `/stories/${storyId}/${src}`;
+      }
+      sectionImage = `<div class="story-image-container"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"></div>`;
+      continue;
+    }
+
+    // Regular text (non-empty lines)
+    if (line.trim()) {
+      sectionText.push(`<p>${escapeHtml(line)}</p>`);
+    }
+  }
+
+  // Flush final section
+  flushSection();
+
+  return html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function closeStoryViewer() {
+  storyViewer.classList.add('hidden');
+}
+
+viewerCloseBtn.addEventListener('click', closeStoryViewer);
+storyViewer.addEventListener('click', (e) => {
+  if (e.target === storyViewer) closeStoryViewer();
 });
 
 seedInput.value = "Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.";

@@ -102,7 +102,29 @@ export class WorldState {
     }
 
     if (changes.time && typeof changes.time === 'object') {
-      this.time = changes.time;
+      // Validate time doesn't go backwards
+      const newTime = changes.time;
+      const currentMinutes = (this.time.day * 24 * 60) + (this.time.hour * 60) + this.time.minute;
+      const newMinutes = (newTime.day * 24 * 60) + (newTime.hour * 60) + newTime.minute;
+
+      if (newMinutes > currentMinutes) {
+        this.time = newTime;
+      } else {
+        // Time went backwards, advance by 15 minutes instead
+        console.warn('Time went backwards, auto-advancing by 15 minutes');
+        let minute = this.time.minute + 15;
+        let hour = this.time.hour;
+        let day = this.time.day;
+        if (minute >= 60) {
+          minute -= 60;
+          hour++;
+        }
+        if (hour >= 24) {
+          hour -= 24;
+          day++;
+        }
+        this.time = { day, hour, minute };
+      }
     }
 
     if (changes.environmentUpdate && typeof changes.environmentUpdate === 'object') {
