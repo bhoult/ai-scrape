@@ -1,0 +1,13 @@
+{
+  "name": "story-generator",
+  "version": "1.0.0",
+  "description": "AI-powered story generator with DM and player agents",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

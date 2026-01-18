@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Generator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-row">
+        <h1>Story Generator</h1>
+        <button id="menu-btn" class="menu-btn">Saved Stories</button>
+      </div>
+      <div class="controls">
+        <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
+        <div class="buttons">
+          <button id="start-btn">Start Story</button>
+          <div class="turn-controls">
+            <button id="turn-btn" disabled>Next Turn</button>
+            <input type="number" id="turn-count" value="1" min="1" max="100" title="Number of turns">
+          </div>
+          <span id="turn-counter">Turn: 0</span>
+          <span id="time-display"></span>
+        </div>
+      </div>
+      <div class="dm-controls" id="dm-controls" style="display: none;">
+        <input type="text" id="dm-instructions" placeholder="Optional DM instructions for next turn (e.g., 'A snake appears', 'It starts raining')">
+      </div>
+    </header>
+
+    <div id="story-menu" class="story-menu hidden">
+      <div class="story-menu-content">
+        <div class="story-menu-header">
+          <h2>Saved Stories</h2>
+          <button id="menu-close-btn" class="close-btn">&times;</button>
+        </div>
+        <div class="story-menu-options">
+          <label>
+            <input type="checkbox" id="generate-images-checkbox">
+            Generate missing images on load
+          </label>
+        </div>
+        <div id="story-list" class="story-list">
+          <p class="placeholder">Loading stories...</p>
+        </div>
+      </div>
+    </div>
+
+    <main>
+      <div class="left-panel">
+        <div class="story-section">
+          <h2>Story</h2>
+          <div id="story-content"></div>
+        </div>
+        <div class="world-section">
+          <h2>World State</h2>
+          <div id="world-state">
+            <p class="placeholder">Start a game to see world state</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="right-panel">
+        <h2>LLM Log</h2>
+        <div id="llm-log">
+          <p class="placeholder">LLM requests and responses will appear here</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <p>Processing...</p>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
