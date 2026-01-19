@@ -237,6 +237,51 @@ export class GameEngine {
     return `Day ${time.day}, ${hour}:${minute}`;
   }
 
+  async verifyCharacterStates(narrative, characters) {
+    // Build character descriptions for the prompt
+    const charDescriptions = characters.map(c => {
+      return `- ${c.name} (id: ${c.id}): clothing="${c.clothing}", status="${c.status}", inventory=[${(c.inventory || []).join(', ')}]`;
+    }).join('\n');
+
+    const prompt = `Based on this narrative, check if any character states need to be updated.
+
+NARRATIVE:
+${narrative}
+
+CURRENT CHARACTER STATES:
+${charDescriptions}
+
+If the narrative describes any changes to clothing, status, or inventory that are NOT reflected in the current states above, return updates. Otherwise return an empty array.
+
+IMPORTANT:
+- If clothing was removed, destroyed, or changed, set clothingChange to the NEW complete outfit (e.g., "naked", "shirtless in jeans", "torn dress")
+- If status changed (injured, tired, wet, sunburned, etc.), set statusChange
+- If items were picked up or dropped, set inventoryAdd/inventoryRemove
+
+Respond with JSON only:
+{
+  "characterUpdates": [
+    {
+      "id": "character_id",
+      "clothingChange": "new complete clothing description or null",
+      "statusChange": "new status or null",
+      "inventoryAdd": [],
+      "inventoryRemove": []
+    }
+  ]
+}
+
+If no updates needed, respond with: {"characterUpdates": []}`;
+
+    try {
+      const result = await queryLLMJSON(prompt, { model: this.model });
+      return result.parsed?.characterUpdates || [];
+    } catch (err) {
+      console.error('Error verifying character states:', err.message);
+      return [];
+    }
+  }
+
   saveStory() {
     if (!this.storyId) return;
 
@@ -736,6 +781,13 @@ Respond with ONLY a JSON object:
     }
 
     this.worldState.applyChanges(resolution.worldChanges);
+
+    // Verify and update character states based on narrative
+    const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters);
+    if (verifiedUpdates && verifiedUpdates.length > 0) {
+      console.log(`[Turn ${this.worldState.turnNumber + 1}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
+      this.worldState.applyChanges({ characterUpdates: verifiedUpdates });
+    }
     this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
 
     // Record DM instructions as a major event
