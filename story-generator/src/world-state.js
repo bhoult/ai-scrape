@@ -164,7 +164,8 @@ export class WorldState {
   }
 
   getStateSnapshot() {
-    return {
+    // Deep copy to prevent reference mutations affecting snapshots
+    return JSON.parse(JSON.stringify({
       turnNumber: this.turnNumber,
       summary: this.summary,
       currentLocation: this.currentLocation,
@@ -176,7 +177,7 @@ export class WorldState {
       narrativeArc: this.narrativeArc,
       majorEvents: this.majorEvents,
       tensions: this.tensions
-    };
+    }));
   }
 
   getTimeString() {
