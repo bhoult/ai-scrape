@@ -20,11 +20,13 @@ const storyViewerTitle = document.getElementById('story-viewer-title');
 const storyViewerBody = document.getElementById('story-viewer-body');
 const viewerCloseBtn = document.getElementById('viewer-close-btn');
 const modelSelect = document.getElementById('model-select');
+const characterDisplay = document.getElementById('character-display');
 
 let currentTurn = 0;
 let currentStoryId = null;
 let availableModels = {};
 let defaultModel = null;
+let previousCharacterStats = {}; // Track previous stats for change indicators
 
 // Load available models on startup
 async function loadModels() {
@@ -337,6 +339,7 @@ async function deleteFromTurn(turn) {
     turnCounter.textContent = `Turn: ${currentTurn}`;
     timeDisplay.textContent = formatTime(data.worldState.time);
     renderWorldState(data.worldState);
+    renderCharacterDisplay(data.worldState.characters);
 
     console.log(`[Frontend] Deleted. Now at turn ${data.turn}`);
   } catch (error) {
@@ -551,6 +554,79 @@ function renderWorldState(state) {
   worldState.innerHTML = html;
 }
 
+function renderCharacterDisplay(characters) {
+  if (!characters || characters.length === 0) {
+    characterDisplay.innerHTML = '<p class="placeholder">No characters yet</p>';
+    return;
+  }
+
+  const statLabels = {
+    health: 'HP',
+    stamina: 'STM',
+    hunger: 'HNG',
+    thirst: 'THR',
+    strength: 'STR',
+    dexterity: 'DEX',
+    encumbrance: 'ENC'
+  };
+
+  const statDefaults = {
+    health: 100,
+    stamina: 100,
+    hunger: 0,
+    thirst: 0,
+    strength: 50,
+    dexterity: 50,
+    encumbrance: 0
+  };
+
+  let html = '';
+
+  for (const char of characters) {
+    const stats = char.stats || {};
+    const prevStats = previousCharacterStats[char.id] || {};
+
+    html += `<div class="character-card">
+      <h3>
+        <span>${char.name}</span>
+        <span class="status">${char.status || 'Unknown'}</span>
+      </h3>
+      <div class="character-stats">`;
+
+    for (const [stat, label] of Object.entries(statLabels)) {
+      const value = stats[stat] ?? statDefaults[stat];
+      const prevValue = prevStats[stat];
+      let changeIndicator = '';
+
+      if (prevValue !== undefined && prevValue !== value) {
+        if (value > prevValue) {
+          changeIndicator = `<span class="stat-change up">+${value - prevValue}</span>`;
+        } else {
+          changeIndicator = `<span class="stat-change down">${value - prevValue}</span>`;
+        }
+      }
+
+      html += `
+        <div class="stat-item">
+          <span class="stat-label">${label}</span>
+          <span class="stat-value">${Math.round(value)}%${changeIndicator}</span>
+          <div class="stat-bar">
+            <div class="stat-bar-fill ${stat}" style="width: ${value}%"></div>
+          </div>
+        </div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  characterDisplay.innerHTML = html;
+
+  // Store current stats for next comparison
+  for (const char of characters) {
+    previousCharacterStats[char.id] = { ...(char.stats || statDefaults) };
+  }
+}
+
 function renderLogEntry(log) {
   const entry = document.createElement('div');
   entry.className = 'log-entry';
@@ -637,8 +713,10 @@ async function startGame() {
     }
 
     currentStoryId = data.storyId;
+    previousCharacterStats = {}; // Reset stats tracking for new story
     renderNarrative(data.narrative, 0, null, data.worldState.time);
     renderWorldState(data.worldState);
+    renderCharacterDisplay(data.worldState.characters);
 
     for (const log of data.llmLog) {
       renderLogEntry(log);
@@ -689,6 +767,7 @@ async function advanceTurn() {
 
       renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time);
       renderWorldState(data.worldState);
+    renderCharacterDisplay(data.worldState.characters);
 
       for (const log of data.turnLogs) {
         renderLogEntry(log);
@@ -847,6 +926,8 @@ async function loadStory(storyId) {
     turnCounter.textContent = `Turn: ${currentTurn}`;
     timeDisplay.textContent = formatTime(data.worldState.time);
     renderWorldState(data.worldState);
+    previousCharacterStats = {};  // Reset for loaded story - no change indicators
+    renderCharacterDisplay(data.worldState.characters);
 
     // Restore model selection
     if (data.model && modelSelect.querySelector(`option[value="${data.model}"]`)) {
