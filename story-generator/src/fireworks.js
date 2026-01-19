@@ -1,9 +1,38 @@
+import { writeFileSync, mkdirSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { FIREWORKS_API_URL, FIREWORKS_MODEL, AVAILABLE_MODELS, getApiKey, LLM_CONFIG } from './config.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOGS_DIR = join(__dirname, '../logs');
 
 const MAX_RETRIES = 5;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function logLLMCall(request, response, modelKey, elapsed) {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const modelName = modelKey || 'default';
+    const filename = `${timestamp}_${modelName}.json`;
+    const filepath = join(LOGS_DIR, filename);
+
+    const logData = {
+      timestamp: new Date().toISOString(),
+      model: modelKey,
+      elapsed,
+      request,
+      response
+    };
+
+    writeFileSync(filepath, JSON.stringify(logData, null, 2));
+  } catch (err) {
+    console.error('Error writing LLM log:', err.message);
+  }
 }
 
 export function getModelId(modelKey) {
@@ -80,6 +109,9 @@ export async function queryLLM(prompt, options = {}) {
     }
 
     const content = data.choices?.[0]?.message?.content;
+
+    // Log the request and response
+    logLLMCall({ messages, ...body }, data, model, elapsed);
 
     return {
       content,
