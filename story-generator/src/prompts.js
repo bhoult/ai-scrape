@@ -86,7 +86,10 @@ Respond with a JSON object containing:
         "thirst": 0,
         "strength": 50,
         "dexterity": 50,
-        "encumbrance": 0
+        "encumbrance": 0,
+        "sanity": 100,
+        "anger": 0,
+        "fear": 0
       }
     }
   ],
@@ -137,7 +140,10 @@ export function playerActionPrompt(character, worldState, recentHistory) {
     `Thirst: ${stats.thirst ?? 0}%`,
     `Strength: ${stats.strength ?? 50}%`,
     `Dexterity: ${stats.dexterity ?? 50}%`,
-    `Encumbrance: ${stats.encumbrance ?? 0}%`
+    `Encumbrance: ${stats.encumbrance ?? 0}%`,
+    `Sanity: ${stats.sanity ?? 100}%`,
+    `Anger: ${stats.anger ?? 0}%`,
+    `Fear: ${stats.fear ?? 0}%`
   ].join(', ');
 
   return `You are ${character.name}.
@@ -153,7 +159,7 @@ YOUR CHARACTER:
 - Status: ${character.status}
 - Stats: ${statsStr}
 
-Consider your physical condition when deciding actions. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Encumbrance affects mobility.
+Consider your physical and mental condition when deciding actions. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Encumbrance affects mobility. Low sanity may cause irrational behavior. High anger may cause aggressive or reckless actions. High fear may cause hesitation or avoidance.
 
 CURRENT SITUATION:
 Location: ${loc.name || 'Unknown'}
@@ -203,7 +209,7 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
       appearance.distinguishing
     ].filter(Boolean).join(', ');
     const stats = c.stats || {};
-    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% ENC:${stats.encumbrance ?? 0}%`;
+    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% ENC:${stats.encumbrance ?? 0}% SAN:${stats.sanity ?? 100}% ANG:${stats.anger ?? 0}% FER:${stats.fear ?? 0}%`;
     return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}, inventory: [${safeJoin(c.inventory) || 'nothing'}]
     Stats: ${statsStr}`;
   }).join('\n');
@@ -251,6 +257,9 @@ Resolve these actions realistically. Consider:
 - Low health/stamina = actions may fail or have reduced effectiveness
 - High hunger (>50%) or thirst (>50%) = impaired judgment and physical performance
 - High encumbrance (>70%) = movement penalties, may drop items
+- Low sanity (<50%) = character may hallucinate, make irrational decisions, or misinterpret events
+- High anger (>50%) = character may act aggressively, make rash decisions, or lash out
+- High fear (>70%) = character may freeze, flee, or refuse dangerous actions
 - How characters interact with each other
 - Environmental effects and discoveries
 - Natural consequences of actions

@@ -83,7 +83,7 @@ export class WorldState {
           }
           if (update.statsChange && typeof update.statsChange === 'object') {
             if (!character.stats) {
-              character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, encumbrance: 0 };
+              character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
             }
             for (const [stat, value] of Object.entries(update.statsChange)) {
               if (typeof value === 'number' && value >= 0 && value <= 100) {

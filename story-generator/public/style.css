@@ -471,6 +471,9 @@ main {
 .stat-item .stat-bar-fill.strength { background: #ef4444; }
 .stat-item .stat-bar-fill.dexterity { background: #a855f7; }
 .stat-item .stat-bar-fill.encumbrance { background: #eab308; }
+.stat-item .stat-bar-fill.sanity { background: #22d3ee; }
+.stat-item .stat-bar-fill.anger { background: #f43f5e; }
+.stat-item .stat-bar-fill.fear { background: #8b5cf6; }
 
 .stat-change {
   font-size: 10px;

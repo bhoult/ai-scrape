@@ -567,7 +567,10 @@ function renderCharacterDisplay(characters) {
     thirst: 'THR',
     strength: 'STR',
     dexterity: 'DEX',
-    encumbrance: 'ENC'
+    encumbrance: 'ENC',
+    sanity: 'SAN',
+    anger: 'ANG',
+    fear: 'FER'
   };
 
   const statDefaults = {
@@ -577,7 +580,10 @@ function renderCharacterDisplay(characters) {
     thirst: 0,
     strength: 50,
     dexterity: 50,
-    encumbrance: 0
+    encumbrance: 0,
+    sanity: 100,
+    anger: 0,
+    fear: 0
   };
 
   let html = '';

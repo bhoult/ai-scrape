@@ -245,7 +245,7 @@ export class GameEngine {
     const charDescriptions = characters.map(c => {
       const stats = c.stats || {};
       return `- ${c.name} (id: ${c.id}): clothing="${c.clothing}", status="${c.status}", inventory=[${(c.inventory || []).join(', ')}]
-    Stats: health=${stats.health ?? 100}%, stamina=${stats.stamina ?? 100}%, hunger=${stats.hunger ?? 0}%, thirst=${stats.thirst ?? 0}%, strength=${stats.strength ?? 50}%, dexterity=${stats.dexterity ?? 50}%, encumbrance=${stats.encumbrance ?? 0}%`;
+    Stats: health=${stats.health ?? 100}%, stamina=${stats.stamina ?? 100}%, hunger=${stats.hunger ?? 0}%, thirst=${stats.thirst ?? 0}%, strength=${stats.strength ?? 50}%, dexterity=${stats.dexterity ?? 50}%, encumbrance=${stats.encumbrance ?? 0}%, sanity=${stats.sanity ?? 100}%, anger=${stats.anger ?? 0}%, fear=${stats.fear ?? 0}%`;
     }).join('\n');
 
     const prompt = `Based on this narrative and elapsed time, update character states and stats.
@@ -267,6 +267,9 @@ STAT GUIDELINES (all values 0-100):
 - thirst: Increase ~3-8% per hour (faster in heat/exertion), decrease when drinking
 - strength/dexterity: Usually stable, but temporary penalties from injury/exhaustion
 - encumbrance: Based on inventory weight (0=empty hands, 100=overburdened)
+- sanity: Decrease from trauma, horror, isolation, or disturbing events; recover slowly with safety/companionship
+- anger: Increase from frustration, conflict, injustice, or provocation; decrease with time/resolution
+- fear: Increase from danger, threats, or frightening events; decrease with safety or facing fears
 
 Respond with JSON only:
 {
@@ -284,7 +287,10 @@ Respond with JSON only:
         "thirst": 20,
         "strength": 50,
         "dexterity": 50,
-        "encumbrance": 10
+        "encumbrance": 10,
+        "sanity": 90,
+        "anger": 15,
+        "fear": 25
       }
     }
   ]
