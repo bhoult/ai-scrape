@@ -1,3 +1,6 @@
+// Proximity threshold in meters for communication
+const COMMUNICATION_RANGE = 20;
+
 export class WorldState {
   constructor() {
     this.turnNumber = 0;
@@ -7,8 +10,10 @@ export class WorldState {
     this.items = new Map();
     this.npcs = new Map();
     this.characters = [];
+    this.deadBodies = [];          // Dead characters converted to objects
     this.flags = new Map();
     this.history = [];
+    this.lastTurnDialogue = {};    // Store dialogue from last turn for proximity communication
     this.time = { day: 1, hour: 8, minute: 0 };
     this.environment = {           // Current environment conditions
       type: '',                    // desert, jungle, forest, cave, building, city, etc.
@@ -90,6 +95,13 @@ export class WorldState {
                 character.stats[stat] = value;
               }
             }
+          }
+          // Handle position updates
+          if (update.positionChange && typeof update.positionChange === 'object') {
+            character.position = {
+              x: typeof update.positionChange.x === 'number' ? update.positionChange.x : (character.position?.x || 0),
+              y: typeof update.positionChange.y === 'number' ? update.positionChange.y : (character.position?.y || 0)
+            };
           }
         }
       }
@@ -180,7 +192,9 @@ export class WorldState {
       summary: this.summary,
       currentLocation: this.currentLocation,
       characters: this.characters,
+      deadBodies: this.deadBodies,
       history: this.history,
+      lastTurnDialogue: this.lastTurnDialogue,
       time: this.time,
       environment: this.environment,
       storyGoal: this.storyGoal,
@@ -188,6 +202,115 @@ export class WorldState {
       majorEvents: this.majorEvents,
       tensions: this.tensions
     }));
+  }
+
+  // Calculate distance between two positions in meters
+  getDistance(pos1, pos2) {
+    if (!pos1 || !pos2) return Infinity;
+    const dx = (pos1.x || 0) - (pos2.x || 0);
+    const dy = (pos1.y || 0) - (pos2.y || 0);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Get characters within communication range of a given character
+  getNearbyCharacters(characterId) {
+    const character = this.characters.find(c => c.id === characterId);
+    if (!character || !character.position) return [];
+
+    return this.characters.filter(c => {
+      if (c.id === characterId) return false;
+      if (!c.position) return true; // Assume nearby if no position
+      return this.getDistance(character.position, c.position) <= COMMUNICATION_RANGE;
+    });
+  }
+
+  // Get dialogue from nearby characters from the last turn
+  getNearbyDialogue(characterId) {
+    const nearbyChars = this.getNearbyCharacters(characterId);
+    const dialogue = [];
+
+    for (const char of nearbyChars) {
+      const lastDialogue = this.lastTurnDialogue[char.id];
+      if (lastDialogue) {
+        dialogue.push({
+          name: char.name,
+          said: lastDialogue
+        });
+      }
+    }
+
+    return dialogue;
+  }
+
+  // Store dialogue from current turn for next turn's proximity communication
+  recordDialogue(characterId, dialogue) {
+    if (dialogue) {
+      this.lastTurnDialogue[characterId] = dialogue;
+    } else {
+      delete this.lastTurnDialogue[characterId];
+    }
+  }
+
+  // Check for deaths and convert dead characters to objects
+  processDeaths() {
+    const deadCharacters = [];
+
+    this.characters = this.characters.filter(char => {
+      const health = char.stats?.health ?? 100;
+      if (health <= 0) {
+        deadCharacters.push(char);
+        return false;
+      }
+      return true;
+    });
+
+    // Convert dead characters to dead body objects
+    for (const char of deadCharacters) {
+      const deadBody = {
+        id: `dead_body_${char.id}`,
+        name: `dead body of ${char.name}`,
+        description: `The lifeless body of ${char.name}. ${char.clothing ? `Wearing ${char.clothing}.` : ''}`,
+        position: char.position,
+        inventory: char.inventory || [],
+        originalCharacter: {
+          id: char.id,
+          name: char.name,
+          appearance: char.appearance
+        }
+      };
+
+      this.deadBodies.push(deadBody);
+
+      // Add to location items
+      if (this.currentLocation && Array.isArray(this.currentLocation.items)) {
+        this.currentLocation.items.push(deadBody.name);
+      }
+
+      // Remove from dialogue tracking
+      delete this.lastTurnDialogue[char.id];
+
+      console.log(`[Death] ${char.name} has died and become "${deadBody.name}"`);
+    }
+
+    return deadCharacters;
+  }
+
+  // Get all objects (items + dead bodies) with positions
+  getPositionedObjects() {
+    const objects = [];
+
+    // Add dead bodies
+    for (const body of this.deadBodies) {
+      if (body.position) {
+        objects.push({
+          name: body.name,
+          position: body.position,
+          type: 'dead_body'
+        });
+      }
+    }
+
+    return objects;
   }
 
   getTimeString() {

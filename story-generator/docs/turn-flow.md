@@ -101,11 +101,13 @@ Respond with a JSON object containing:
         "sanity": 90,
         "anger": 10,
         "fear": 25
-      }
+      },
+      "position": { "x": 0, "y": 5 }
     },
     {
       "id": "char_mike",
       "name": "Mike",
+      "position": { "x": 3, "y": 2 },
       ...
     }
   ],
@@ -507,4 +509,183 @@ stories/
         ├── 20260119_143101_verify-state_llama-v3p1-8b.json
         ├── 20260119_143105_image_flux.json
         └── ...
+```
+
+---
+
+## Position Tracking
+
+Characters and objects have positions tracked in meters (x, y) relative to the scene center.
+
+### Position Updates
+
+The DM can update character positions when they move:
+
+```json
+{
+  "characterUpdates": [
+    {
+      "id": "char_sarah",
+      "positionChange": { "x": 25, "y": -10 }
+    }
+  ]
+}
+```
+
+### Movement Guidelines
+
+- Walking speed: ~5 meters per minute
+- Running speed: ~15 meters per minute
+- Positions affect proximity communication and interactions
+
+---
+
+## Proximity Communication
+
+Characters can only communicate with others within a 20-meter range.
+
+### How It Works
+
+1. At the end of each turn, dialogue from character actions is recorded
+2. Before the next turn, each player agent receives dialogue from nearby characters
+3. This creates realistic "overheard" conversations
+
+### Player Prompt Example
+
+When Sarah speaks, nearby Mike will see in his next turn:
+
+```
+YOU JUST HEARD (from nearby):
+- Sarah said: "Mike, are you hurt? Let me check you over."
+You may respond to what was said or act independently.
+```
+
+### Distance Descriptions
+
+Players see other characters with distance indicators:
+
+- **right next to you** - within 5 meters
+- **nearby** - within 20 meters (can communicate)
+- **some distance away** - 20-50 meters
+- **far away** - beyond 50 meters
+
+---
+
+## Death System
+
+When a character's health reaches 0%, they die and are removed from play.
+
+### Death Process
+
+1. After stats verification, the engine checks for health <= 0
+2. Dead characters are converted to "dead body of {name}" objects
+3. Their inventory remains on the body (can be looted)
+4. The player agent for that character is removed
+5. Death is recorded as a major event
+
+### Dead Body Object
+
+```json
+{
+  "id": "dead_body_char_mike",
+  "name": "dead body of Mike",
+  "description": "The lifeless body of Mike. Wearing khaki cargo pants and torn polo shirt.",
+  "position": { "x": 10, "y": -5 },
+  "inventory": ["pocket knife", "wallet", "water bottle"],
+  "originalCharacter": {
+    "id": "char_mike",
+    "name": "Mike",
+    "appearance": { ... }
+  }
+}
+```
+
+### DM Guidance
+
+The DM is instructed:
+
+```
+DEATH:
+- If a character's health reaches 0%, they DIE
+- Dead characters become objects ("dead body of [name]") and are removed from play
+- Their inventory remains on their body and can be looted
+```
+
+### Player Visibility
+
+Living players see dead bodies in their situation:
+
+```
+Items here: twisted metal, luggage
+Dead bodies: dead body of Mike
+Others present: Sarah (nearby)
+```
+
+---
+
+## Updated Turn Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Human clicks "Next Turn"                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  0. COLLECT NEARBY DIALOGUE                                  │
+│     - For each character, get dialogue from nearby chars     │
+│     - From previous turn (within 20m range)                  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  1. PLAYER AGENTS (parallel)                                │
+│     - Each character receives nearby dialogue                │
+│     - Decides their action based on situation + dialogue     │
+│     - Runs simultaneously for all living characters          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  1.5. RECORD DIALOGUE                                        │
+│     - Store each character's dialogue for next turn          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  2. DM AGENT - RESOLUTION                                   │
+│     - Receives all character actions + positions             │
+│     - Resolves what happens based on stats                   │
+│     - Updates positions for movement                         │
+│     - Generates narrative and world changes                  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  3. VERIFICATION AGENT                                       │
+│     - Updates character stats based on narrative             │
+│     - Tracks hunger, thirst, stamina, mental state           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  4. DEATH PROCESSING                                         │
+│     - Check for characters with health <= 0                  │
+│     - Convert to dead body objects                           │
+│     - Remove player agents for dead characters               │
+│     - Record deaths as major events                          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  5. IMAGE GENERATOR                                          │
+│     - Creates illustration from scene description            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  6. SAVE & UPDATE UI                                         │
+│     - Save turn snapshot for rollback                        │
+│     - Update story display                                   │
+└─────────────────────────────────────────────────────────────┘
 ```

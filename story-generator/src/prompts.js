@@ -90,6 +90,11 @@ Respond with a JSON object containing:
         "sanity": 100,
         "anger": 0,
         "fear": 0
+      },
+      "position": {
+        "x": 0,
+        "y": 0,
+        "_comment": "Position in meters relative to scene center. Characters near each other (within 20m) can communicate."
       }
     }
   ],
@@ -107,7 +112,7 @@ function safeJoin(arr, sep = ', ') {
   return Array.isArray(arr) && arr.length > 0 ? arr.join(sep) : null;
 }
 
-export function playerActionPrompt(character, worldState, recentHistory) {
+export function playerActionPrompt(character, worldState, recentHistory, nearbyDialogue = []) {
   const historyText = recentHistory.length > 0
     ? recentHistory.map(h => `- ${h}`).join('\n')
     : 'No recent events.';
@@ -130,7 +135,25 @@ export function playerActionPrompt(character, worldState, recentHistory) {
   const inventory = safeJoin(character.inventory) || 'Nothing';
   const exits = safeJoin(loc.exits) || 'None apparent';
   const items = safeJoin(loc.items) || 'Nothing notable';
-  const others = safeJoin(worldState.characters?.filter(c => c.id !== character.id).map(c => c.name)) || 'No one else';
+
+  // Build others present with distance info
+  const otherChars = worldState.characters?.filter(c => c.id !== character.id) || [];
+  const charPos = character.position || { x: 0, y: 0 };
+  const othersWithDistance = otherChars.map(c => {
+    const otherPos = c.position || { x: 0, y: 0 };
+    const dx = charPos.x - otherPos.x;
+    const dy = charPos.y - otherPos.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const distStr = distance <= 5 ? 'right next to you' :
+                    distance <= 20 ? 'nearby' :
+                    distance <= 50 ? 'some distance away' : 'far away';
+    return `${c.name} (${distStr})`;
+  });
+  const others = othersWithDistance.length > 0 ? othersWithDistance.join(', ') : 'No one else';
+
+  // Build dead bodies info
+  const deadBodies = worldState.deadBodies || [];
+  const bodiesHere = deadBodies.map(b => b.name).join(', ') || null;
 
   const stats = character.stats || {};
   const statsStr = [
@@ -146,6 +169,16 @@ export function playerActionPrompt(character, worldState, recentHistory) {
     `Fear: ${stats.fear ?? 0}%`
   ].join(', ');
 
+  // Build nearby dialogue section
+  let dialogueSection = '';
+  if (nearbyDialogue && nearbyDialogue.length > 0) {
+    const dialogueLines = nearbyDialogue.map(d => `- ${d.name} said: "${d.said}"`).join('\n');
+    dialogueSection = `\nYOU JUST HEARD (from nearby):\n${dialogueLines}\nYou may respond to what was said or act independently.\n`;
+  }
+
+  const positionStr = character.position ?
+    `Position: (${character.position.x}, ${character.position.y}) meters from center` : '';
+
   return `You are ${character.name}.
 
 CURRENT TIME: ${formatTime(worldState.time)}
@@ -158,6 +191,7 @@ YOUR CHARACTER:
 - Inventory: ${inventory}
 - Status: ${character.status}
 - Stats: ${statsStr}
+${positionStr ? `- ${positionStr}` : ''}
 
 Consider your physical and mental condition when deciding actions. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Encumbrance affects mobility. Low sanity may cause irrational behavior. High anger may cause aggressive or reckless actions. High fear may cause hesitation or avoidance.
 
@@ -166,9 +200,9 @@ Location: ${loc.name || 'Unknown'}
 ${loc.description || 'No description available'}
 
 Available exits: ${exits}
-Items here: ${items}
+Items here: ${items}${bodiesHere ? `\nDead bodies: ${bodiesHere}` : ''}
 Others present: ${others}
-
+${dialogueSection}
 RECENT EVENTS:
 ${historyText}
 
@@ -210,9 +244,18 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
     ].filter(Boolean).join(', ');
     const stats = c.stats || {};
     const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% ENC:${stats.encumbrance ?? 0}% SAN:${stats.sanity ?? 100}% ANG:${stats.anger ?? 0}% FER:${stats.fear ?? 0}%`;
-    return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}, inventory: [${safeJoin(c.inventory) || 'nothing'}]
+    const posStr = c.position ? ` at position (${c.position.x}, ${c.position.y})` : '';
+    return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}${posStr}, inventory: [${safeJoin(c.inventory) || 'nothing'}]
     Stats: ${statsStr}`;
   }).join('\n');
+
+  // Dead bodies info
+  const deadBodiesText = (worldState.deadBodies && worldState.deadBodies.length > 0)
+    ? '\nDEAD BODIES:\n' + worldState.deadBodies.map(b => {
+        const posStr = b.position ? ` at (${b.position.x}, ${b.position.y})` : '';
+        return `- ${b.name}${posStr}, carrying: [${safeJoin(b.inventory) || 'nothing'}]`;
+      }).join('\n')
+    : '';
 
   const dmInstructionsText = dmInstructions
     ? `\nDM INSTRUCTIONS (incorporate these into the narrative):\n${dmInstructions}\n`
@@ -247,7 +290,7 @@ Exits: ${safeJoin(loc.exits) || 'None apparent'}
 
 CHARACTERS:
 ${charactersText}
-
+${deadBodiesText}
 CHARACTER ACTIONS THIS TURN:
 ${actionsText}
 ${dmInstructionsText}
@@ -273,10 +316,22 @@ TIME TRACKING (CRITICAL):
 - Extended activities (long travel, complex tasks, rest): 1-4 hours
 - When hour reaches 24, increment day and reset hour to 0
 
+POSITION TRACKING:
+- Characters have positions in meters (x, y) relative to scene center
+- Update positionChange when characters move significantly
+- Characters within 20 meters can communicate with each other
+- Movement speed: walking ~5m/min, running ~15m/min
+
+DEATH:
+- If a character's health reaches 0%, they DIE
+- Dead characters become objects ("dead body of [name]") and are removed from play
+- Their inventory remains on their body and can be looted
+
 MANDATORY - characterUpdates MUST reflect ALL state changes:
 - clothingChange: REQUIRED if ANY clothing changes occur. Set to COMPLETE current outfit (e.g., "naked", "torn shirt and jeans", "shirtless in cargo pants"). DO NOT OMIT THIS.
 - statusChange: REQUIRED if status changes (injured, tired, wet, etc.)
 - inventoryAdd/inventoryRemove: REQUIRED if items are picked up or dropped
+- positionChange: REQUIRED if character moves significantly (x, y in meters)
 - You MUST include a characterUpdates entry for EVERY character whose state changed this turn
 - If clothing is removed or destroyed, clothingChange MUST be set (e.g., "naked" or partial description)
 
@@ -307,14 +362,16 @@ Respond with JSON:
         "inventoryAdd": [],
         "inventoryRemove": [],
         "statusChange": "wet and cold",
-        "clothingChange": "naked"
+        "clothingChange": "naked",
+        "positionChange": { "x": 10, "y": -5 }
       },
       {
         "id": "char_mike",
         "inventoryAdd": [],
         "inventoryRemove": ["shirt"],
         "statusChange": null,
-        "clothingChange": "shirtless, wearing only cargo pants and boots"
+        "clothingChange": "shirtless, wearing only cargo pants and boots",
+        "positionChange": null
       }
     ],
     "environmentUpdate": {

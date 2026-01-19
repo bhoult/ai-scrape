@@ -450,10 +450,16 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       personality: c.personality || '',
       goals: c.goals || '',
       inventory: Array.isArray(c.inventory) ? c.inventory : [],
-      status: c.status || 'unknown'
+      status: c.status || 'unknown',
+      stats: c.stats || { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 },
+      position: c.position || { x: 0, y: 0 }
     }));
 
-    // Recreate agents with model
+    // Restore dead bodies and dialogue tracking
+    this.worldState.deadBodies = Array.isArray(data.worldState.deadBodies) ? data.worldState.deadBodies : [];
+    this.worldState.lastTurnDialogue = data.worldState.lastTurnDialogue || {};
+
+    // Recreate agents with model (only for living characters)
     this.dmAgent = new DMAgent(this.model);
     this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
     this.llmLog = [];
@@ -817,9 +823,18 @@ Respond with ONLY a JSON object:
     const recentHistory = this.worldState.getRecentHistory(3);
     const stateSnapshot = this.worldState.getStateSnapshot();
 
-    // Run all player action LLM calls in parallel
+    // Get nearby dialogue for each character from last turn
+    const nearbyDialogueMap = {};
+    for (const agent of this.playerAgents) {
+      nearbyDialogueMap[agent.character.id] = this.worldState.getNearbyDialogue(agent.character.id);
+    }
+
+    // Run all player action LLM calls in parallel, passing nearby dialogue
     const playerResults = await Promise.all(
-      this.playerAgents.map(agent => agent.decideAction(stateSnapshot, recentHistory))
+      this.playerAgents.map(agent => {
+        const nearbyDialogue = nearbyDialogueMap[agent.character.id] || [];
+        return agent.decideAction(stateSnapshot, recentHistory, nearbyDialogue);
+      })
     );
 
     const characterActions = playerResults.map(result => ({
@@ -827,6 +842,11 @@ Respond with ONLY a JSON object:
       action: result.action,
       dialogue: result.dialogue
     }));
+
+    // Record this turn's dialogue for next turn's proximity communication
+    for (const result of playerResults) {
+      this.worldState.recordDialogue(result.character.id, result.dialogue);
+    }
 
     turnLogs.push(...playerResults.map(result => result.llmLog));
 
@@ -860,6 +880,20 @@ Respond with ONLY a JSON object:
       console.log(`[Turn ${this.worldState.turnNumber + 1}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
       this.worldState.applyChanges({ characterUpdates: verifiedUpdates });
     }
+
+    // Process deaths - characters with health <= 0 become dead bodies
+    const deadCharacters = this.worldState.processDeaths();
+    if (deadCharacters.length > 0) {
+      // Remove player agents for dead characters
+      for (const deadChar of deadCharacters) {
+        this.playerAgents = this.playerAgents.filter(agent => agent.character.id !== deadChar.id);
+        console.log(`[Turn ${this.worldState.turnNumber + 1}] Removed player agent for deceased character: ${deadChar.name}`);
+
+        // Add death to major events
+        this.worldState.majorEvents.push(`${deadChar.name} died`);
+      }
+    }
+
     this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
 
     // Record DM instructions as a major event

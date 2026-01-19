@@ -11,8 +11,8 @@ export class PlayerAgent {
     this.model = model;
   }
 
-  async decideAction(worldState, recentHistory) {
-    const prompt = playerActionPrompt(this.character, worldState, recentHistory);
+  async decideAction(worldState, recentHistory, nearbyDialogue = []) {
+    const prompt = playerActionPrompt(this.character, worldState, recentHistory, nearbyDialogue);
 
     const characterName = this.character.name.toLowerCase().replace(/\s+/g, '-');
     const result = await queryLLMJSON(prompt, {
