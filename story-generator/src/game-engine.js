@@ -455,9 +455,9 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       position: c.position || { x: 0, y: 0 }
     }));
 
-    // Restore dead bodies and dialogue tracking
+    // Restore dead bodies and turn action tracking
     this.worldState.deadBodies = Array.isArray(data.worldState.deadBodies) ? data.worldState.deadBodies : [];
-    this.worldState.lastTurnDialogue = data.worldState.lastTurnDialogue || {};
+    this.worldState.lastTurnActions = data.worldState.lastTurnActions || data.worldState.lastTurnDialogue || {};
 
     // Recreate agents with model (only for living characters)
     this.dmAgent = new DMAgent(this.model);
@@ -823,32 +823,69 @@ Respond with ONLY a JSON object:
     const recentHistory = this.worldState.getRecentHistory(3);
     const stateSnapshot = this.worldState.getStateSnapshot();
 
-    // Get nearby dialogue for each character from last turn
-    const nearbyDialogueMap = {};
+    // Get actions and dialogue from previous turn for each character (what they observed)
+    const previousTurnInfoMap = {};
     for (const agent of this.playerAgents) {
-      nearbyDialogueMap[agent.character.id] = this.worldState.getNearbyDialogue(agent.character.id);
+      previousTurnInfoMap[agent.character.id] = this.worldState.getNearbyTurnInfo(agent.character.id);
     }
 
-    // Run all player action LLM calls in parallel, passing nearby dialogue
-    const playerResults = await Promise.all(
+    // ===== PHASE 1: Think and Talk =====
+    // All players consider the situation and speak to nearby characters
+    console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 1: Think and Talk`);
+    const thinkTalkResults = await Promise.all(
       this.playerAgents.map(agent => {
-        const nearbyDialogue = nearbyDialogueMap[agent.character.id] || [];
-        return agent.decideAction(stateSnapshot, recentHistory, nearbyDialogue);
+        const prevTurnInfo = previousTurnInfoMap[agent.character.id] || [];
+        return agent.thinkAndTalk(stateSnapshot, recentHistory, prevTurnInfo);
       })
     );
 
-    const characterActions = playerResults.map(result => ({
+    // Log think/talk results
+    turnLogs.push(...thinkTalkResults.map(result => result.llmLog));
+
+    // Collect speech from think/talk phase for nearby characters
+    // Build a map of character id -> speech for proximity filtering
+    const thinkTalkSpeechMap = {};
+    for (const result of thinkTalkResults) {
+      if (result.speech) {
+        thinkTalkSpeechMap[result.character.id] = {
+          name: result.character.name,
+          said: result.speech
+        };
+      }
+    }
+
+    // Build nearby speech for each character (what they hear from others in think/talk phase)
+    const nearbySpeechMap = {};
+    for (const agent of this.playerAgents) {
+      const nearbyChars = this.worldState.getNearbyCharacters(agent.character.id);
+      const nearbyCharIds = nearbyChars.map(c => c.id);
+      nearbySpeechMap[agent.character.id] = nearbyCharIds
+        .filter(id => thinkTalkSpeechMap[id])
+        .map(id => thinkTalkSpeechMap[id]);
+    }
+
+    // ===== PHASE 2: Action =====
+    // All players hear what nearby characters said and decide their final action
+    console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 2: Action`);
+    const actionResults = await Promise.all(
+      this.playerAgents.map(agent => {
+        const nearbySpeech = nearbySpeechMap[agent.character.id] || [];
+        return agent.decideAction(stateSnapshot, recentHistory, nearbySpeech);
+      })
+    );
+
+    const characterActions = actionResults.map(result => ({
       character: result.character,
       action: result.action,
       dialogue: result.dialogue
     }));
 
-    // Record this turn's dialogue for next turn's proximity communication
-    for (const result of playerResults) {
-      this.worldState.recordDialogue(result.character.id, result.dialogue);
+    // Record this turn's action and dialogue for next turn's proximity observation
+    for (const result of actionResults) {
+      this.worldState.recordTurnAction(result.character.id, result.action, result.dialogue);
     }
 
-    turnLogs.push(...playerResults.map(result => result.llmLog));
+    turnLogs.push(...actionResults.map(result => result.llmLog));
 
     const resolution = await this.dmAgent.resolveActions(
       stateSnapshot,

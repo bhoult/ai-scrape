@@ -13,7 +13,7 @@ export class WorldState {
     this.deadBodies = [];          // Dead characters converted to objects
     this.flags = new Map();
     this.history = [];
-    this.lastTurnDialogue = {};    // Store dialogue from last turn for proximity communication
+    this.lastTurnActions = {};     // Store actions and dialogue from last turn for proximity communication
     this.time = { day: 1, hour: 8, minute: 0 };
     this.environment = {           // Current environment conditions
       type: '',                    // desert, jungle, forest, cave, building, city, etc.
@@ -194,7 +194,7 @@ export class WorldState {
       characters: this.characters,
       deadBodies: this.deadBodies,
       history: this.history,
-      lastTurnDialogue: this.lastTurnDialogue,
+      lastTurnActions: this.lastTurnActions,
       time: this.time,
       environment: this.environment,
       storyGoal: this.storyGoal,
@@ -224,30 +224,31 @@ export class WorldState {
     });
   }
 
-  // Get dialogue from nearby characters from the last turn
-  getNearbyDialogue(characterId) {
+  // Get actions and dialogue from nearby characters from the last turn
+  getNearbyTurnInfo(characterId) {
     const nearbyChars = this.getNearbyCharacters(characterId);
-    const dialogue = [];
+    const turnInfo = [];
 
     for (const char of nearbyChars) {
-      const lastDialogue = this.lastTurnDialogue[char.id];
-      if (lastDialogue) {
-        dialogue.push({
+      const lastInfo = this.lastTurnActions[char.id];
+      if (lastInfo && (lastInfo.action || lastInfo.dialogue)) {
+        turnInfo.push({
           name: char.name,
-          said: lastDialogue
+          action: lastInfo.action || null,
+          dialogue: lastInfo.dialogue || null
         });
       }
     }
 
-    return dialogue;
+    return turnInfo;
   }
 
-  // Store dialogue from current turn for next turn's proximity communication
-  recordDialogue(characterId, dialogue) {
-    if (dialogue) {
-      this.lastTurnDialogue[characterId] = dialogue;
+  // Store action and dialogue from current turn for next turn's proximity observation
+  recordTurnAction(characterId, action, dialogue) {
+    if (action || dialogue) {
+      this.lastTurnActions[characterId] = { action, dialogue };
     } else {
-      delete this.lastTurnDialogue[characterId];
+      delete this.lastTurnActions[characterId];
     }
   }
 
@@ -286,8 +287,8 @@ export class WorldState {
         this.currentLocation.items.push(deadBody.name);
       }
 
-      // Remove from dialogue tracking
-      delete this.lastTurnDialogue[char.id];
+      // Remove from action tracking
+      delete this.lastTurnActions[char.id];
 
       console.log(`[Death] ${char.name} has died and become "${deadBody.name}"`);
     }

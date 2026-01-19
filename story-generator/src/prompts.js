@@ -112,7 +112,8 @@ function safeJoin(arr, sep = ', ') {
   return Array.isArray(arr) && arr.length > 0 ? arr.join(sep) : null;
 }
 
-export function playerActionPrompt(character, worldState, recentHistory, nearbyDialogue = []) {
+// Helper function to build common player context
+function buildPlayerContext(character, worldState, recentHistory) {
   const historyText = recentHistory.length > 0
     ? recentHistory.map(h => `- ${h}`).join('\n')
     : 'No recent events.';
@@ -145,7 +146,7 @@ export function playerActionPrompt(character, worldState, recentHistory, nearbyD
     const dy = charPos.y - otherPos.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     const distStr = distance <= 5 ? 'right next to you' :
-                    distance <= 20 ? 'nearby' :
+                    distance <= 20 ? 'nearby (can communicate)' :
                     distance <= 50 ? 'some distance away' : 'far away';
     return `${c.name} (${distStr})`;
   });
@@ -169,52 +170,129 @@ export function playerActionPrompt(character, worldState, recentHistory, nearbyD
     `Fear: ${stats.fear ?? 0}%`
   ].join(', ');
 
-  // Build nearby dialogue section
-  let dialogueSection = '';
-  if (nearbyDialogue && nearbyDialogue.length > 0) {
-    const dialogueLines = nearbyDialogue.map(d => `- ${d.name} said: "${d.said}"`).join('\n');
-    dialogueSection = `\nYOU JUST HEARD (from nearby):\n${dialogueLines}\nYou may respond to what was said or act independently.\n`;
-  }
-
   const positionStr = character.position ?
     `Position: (${character.position.x}, ${character.position.y}) meters from center` : '';
+
+  return {
+    historyText,
+    loc,
+    appearanceStr,
+    inventory,
+    exits,
+    items,
+    others,
+    bodiesHere,
+    statsStr,
+    positionStr
+  };
+}
+
+// Phase 1: Think and Talk - Player considers the situation and communicates with nearby characters
+export function playerThinkTalkPrompt(character, worldState, recentHistory, previousTurnInfo = []) {
+  const ctx = buildPlayerContext(character, worldState, recentHistory);
+
+  // Build what you observed section (actions and dialogue from last turn)
+  let observedSection = '';
+  if (previousTurnInfo && previousTurnInfo.length > 0) {
+    const observedLines = previousTurnInfo.map(info => {
+      let line = `- ${info.name}`;
+      if (info.action) {
+        line += `: ${info.action}`;
+      }
+      if (info.dialogue) {
+        line += ` Said: "${info.dialogue}"`;
+      }
+      return line;
+    }).join('\n');
+    observedSection = `\nLAST TURN, YOU OBSERVED NEARBY:\n${observedLines}\n`;
+  }
 
   return `You are ${character.name}.
 
 CURRENT TIME: ${formatTime(worldState.time)}
 
 YOUR CHARACTER:
-- Appearance: ${appearanceStr}
+- Appearance: ${ctx.appearanceStr}
 - Clothing: ${character.clothing || 'Unknown'}
 - Personality: ${character.personality}
 - Goals: ${character.goals}
-- Inventory: ${inventory}
+- Inventory: ${ctx.inventory}
 - Status: ${character.status}
-- Stats: ${statsStr}
-${positionStr ? `- ${positionStr}` : ''}
+- Stats: ${ctx.statsStr}
+${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 
-Consider your physical and mental condition when deciding actions. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Encumbrance affects mobility. Low sanity may cause irrational behavior. High anger may cause aggressive or reckless actions. High fear may cause hesitation or avoidance.
+Consider your physical and mental condition. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Low sanity may cause irrational behavior. High anger may cause aggressive actions. High fear may cause hesitation.
 
 CURRENT SITUATION:
-Location: ${loc.name || 'Unknown'}
-${loc.description || 'No description available'}
+Location: ${ctx.loc.name || 'Unknown'}
+${ctx.loc.description || 'No description available'}
 
-Available exits: ${exits}
-Items here: ${items}${bodiesHere ? `\nDead bodies: ${bodiesHere}` : ''}
-Others present: ${others}
-${dialogueSection}
+Available exits: ${ctx.exits}
+Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}
+Others present: ${ctx.others}
+${observedSection}
 RECENT EVENTS:
-${historyText}
+${ctx.historyText}
 
 WORLD SUMMARY: ${worldState.summary}
 
-What do you do? Choose ONE action that fits your character. Be specific and actionable.
+This is the THINK AND TALK phase. Consider what you want to do this turn and communicate with nearby characters (within 20 meters) to coordinate or share information. They will hear what you say before deciding their actions.
 
 Respond with JSON:
 {
-  "thinking": "Brief internal thought about the situation (1 sentence)",
-  "action": "The specific action you take (1-2 sentences)",
-  "dialogue": "What you say, if anything (or null if silent)"
+  "thinking": "Your internal thoughts about the situation and what you're planning (1-2 sentences)",
+  "intendedAction": "What you're planning to do this turn (1 sentence, can change based on responses)",
+  "speech": "What you say out loud to nearby characters (or null if staying silent). Be specific - ask questions, share plans, warn of dangers, etc."
+}`;
+}
+
+// Phase 2: Action - Player hears what others said and decides final action
+export function playerActionPrompt(character, worldState, recentHistory, nearbyDialogue = []) {
+  const ctx = buildPlayerContext(character, worldState, recentHistory);
+
+  // Build nearby dialogue section from think/talk phase
+  let dialogueSection = '';
+  if (nearbyDialogue && nearbyDialogue.length > 0) {
+    const dialogueLines = nearbyDialogue.map(d => `- ${d.name} says: "${d.said}"`).join('\n');
+    dialogueSection = `\nYOU HEAR FROM NEARBY:\n${dialogueLines}\n\nRespond to what was said if appropriate, or act independently.\n`;
+  }
+
+  return `You are ${character.name}.
+
+CURRENT TIME: ${formatTime(worldState.time)}
+
+YOUR CHARACTER:
+- Appearance: ${ctx.appearanceStr}
+- Clothing: ${character.clothing || 'Unknown'}
+- Personality: ${character.personality}
+- Goals: ${character.goals}
+- Inventory: ${ctx.inventory}
+- Status: ${character.status}
+- Stats: ${ctx.statsStr}
+${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
+
+Consider your physical and mental condition when deciding actions.
+
+CURRENT SITUATION:
+Location: ${ctx.loc.name || 'Unknown'}
+${ctx.loc.description || 'No description available'}
+
+Available exits: ${ctx.exits}
+Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}
+Others present: ${ctx.others}
+${dialogueSection}
+RECENT EVENTS:
+${ctx.historyText}
+
+WORLD SUMMARY: ${worldState.summary}
+
+This is the ACTION phase. You've heard what nearby characters said. Now decide your final action for this turn.
+
+Respond with JSON:
+{
+  "thinking": "Brief thought about what you heard and your decision (1 sentence)",
+  "action": "The specific action you take (1-2 sentences). Be specific and actionable.",
+  "dialogue": "What you say while acting, if anything (or null if silent)"
 }`;
 }
 

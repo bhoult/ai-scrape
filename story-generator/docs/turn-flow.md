@@ -540,24 +540,76 @@ The DM can update character positions when they move:
 
 ---
 
-## Proximity Communication
+## Proximity Communication (Two-Phase System)
 
-Characters can only communicate with others within a 20-meter range.
+Characters can only communicate with others within a 20-meter range. Each turn has two phases to enable real-time conversation.
 
-### How It Works
+### Phase 1: Think and Talk
 
-1. At the end of each turn, dialogue from character actions is recorded
-2. Before the next turn, each player agent receives dialogue from nearby characters
-3. This creates realistic "overheard" conversations
+All players simultaneously:
+1. Consider the situation and what they heard last turn
+2. Decide what they want to do (intended action)
+3. Speak to nearby characters to coordinate or share information
 
-### Player Prompt Example
+**Prompt to Sarah:**
+```
+This is the THINK AND TALK phase. Consider what you want to do this turn and
+communicate with nearby characters (within 20 meters) to coordinate or share
+information. They will hear what you say before deciding their actions.
 
-When Sarah speaks, nearby Mike will see in his next turn:
+Respond with JSON:
+{
+  "thinking": "Your internal thoughts about the situation and what you're planning",
+  "intendedAction": "What you're planning to do this turn",
+  "speech": "What you say out loud to nearby characters"
+}
+```
+
+**Sarah's Response:**
+```json
+{
+  "thinking": "We need to find water soon. Mike might know where to look.",
+  "intendedAction": "Search the wreckage for water containers",
+  "speech": "Mike, I'm going to check the luggage for water bottles. Can you look in the overhead compartments?"
+}
+```
+
+### Phase 2: Action
+
+After all players have spoken, each player:
+1. Hears what nearby characters said in Phase 1
+2. Decides their final action (may change based on what they heard)
+3. Speaks while acting (optional)
+
+**Prompt to Mike (showing what he heard):**
+```
+YOU HEAR FROM NEARBY:
+- Sarah says: "Mike, I'm going to check the luggage for water bottles. Can you look in the overhead compartments?"
+
+This is the ACTION phase. You've heard what nearby characters said. Now decide your final action for this turn.
+```
+
+**Mike's Response:**
+```json
+{
+  "thinking": "Good idea - Sarah's checking luggage, I'll handle the compartments.",
+  "action": "Mike nods and moves to the intact section of the plane, reaching up to check the overhead compartments one by one.",
+  "dialogue": "On it! I'll let you know if I find anything."
+}
+```
+
+### Turn Flow with Communication
 
 ```
-YOU JUST HEARD (from nearby):
-- Sarah said: "Mike, are you hurt? Let me check you over."
-You may respond to what was said or act independently.
+Phase 1: Think & Talk (parallel)
+├── Sarah thinks: "Need water" → speaks: "Check the luggage?"
+├── Mike thinks: "Assess damage" → speaks: "I'll check structural integrity"
+└── (all speech collected)
+
+Phase 2: Action (parallel, with speech from Phase 1)
+├── Sarah hears Mike → decides: search luggage
+├── Mike hears Sarah → decides: check compartments instead
+└── (final actions sent to DM)
 ```
 
 ### Distance Descriptions
@@ -565,8 +617,8 @@ You may respond to what was said or act independently.
 Players see other characters with distance indicators:
 
 - **right next to you** - within 5 meters
-- **nearby** - within 20 meters (can communicate)
-- **some distance away** - 20-50 meters
+- **nearby (can communicate)** - within 20 meters
+- **some distance away** - 20-50 meters (cannot communicate)
 - **far away** - beyond 50 meters
 
 ---
@@ -632,28 +684,44 @@ Others present: Sarah (nearby)
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  0. COLLECT NEARBY DIALOGUE                                  │
-│     - For each character, get dialogue from nearby chars     │
-│     - From previous turn (within 20m range)                  │
+│  0. COLLECT PREVIOUS TURN DIALOGUE                           │
+│     - For each character, get dialogue from last turn        │
+│     - From nearby characters (within 20m range)              │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  1. PLAYER AGENTS (parallel)                                │
-│     - Each character receives nearby dialogue                │
-│     - Decides their action based on situation + dialogue     │
+│  1. PHASE 1: THINK AND TALK (parallel)                       │
+│     - Each character considers the situation                 │
+│     - Decides what they INTEND to do                         │
+│     - SPEAKS to nearby characters to coordinate              │
+│     - All speech is collected                                │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  1.5. DISTRIBUTE SPEECH                                      │
+│     - Each character receives speech from nearby others      │
+│     - Only within 20m communication range                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  2. PHASE 2: ACTION (parallel)                               │
+│     - Each character HEARS what nearby others said           │
+│     - Decides FINAL action (may change based on speech)      │
 │     - Runs simultaneously for all living characters          │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  1.5. RECORD DIALOGUE                                        │
+│  2.5. RECORD ACTION DIALOGUE                                 │
 │     - Store each character's dialogue for next turn          │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  2. DM AGENT - RESOLUTION                                   │
+│  3. DM AGENT - RESOLUTION                                    │
 │     - Receives all character actions + positions             │
 │     - Resolves what happens based on stats                   │
 │     - Updates positions for movement                         │
@@ -662,14 +730,14 @@ Others present: Sarah (nearby)
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  3. VERIFICATION AGENT                                       │
+│  4. VERIFICATION AGENT                                       │
 │     - Updates character stats based on narrative             │
 │     - Tracks hunger, thirst, stamina, mental state           │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  4. DEATH PROCESSING                                         │
+│  5. DEATH PROCESSING                                         │
 │     - Check for characters with health <= 0                  │
 │     - Convert to dead body objects                           │
 │     - Remove player agents for dead characters               │
@@ -678,14 +746,25 @@ Others present: Sarah (nearby)
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  5. IMAGE GENERATOR                                          │
+│  6. IMAGE GENERATOR                                          │
 │     - Creates illustration from scene description            │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  6. SAVE & UPDATE UI                                         │
+│  7. SAVE & UPDATE UI                                         │
 │     - Save turn snapshot for rollback                        │
 │     - Update story display                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### LLM Calls Per Turn
+
+Each turn now makes the following LLM calls:
+- **N × Think/Talk calls** (Phase 1, parallel) - one per living character
+- **N × Action calls** (Phase 2, parallel) - one per living character
+- **1 × DM Resolution call**
+- **1 × Verification call**
+- **1 × Image generation call**
+
+For a 2-character story: 2 + 2 + 1 + 1 + 1 = **7 LLM calls per turn**
