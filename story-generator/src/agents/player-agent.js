@@ -14,9 +14,11 @@ export class PlayerAgent {
   async decideAction(worldState, recentHistory) {
     const prompt = playerActionPrompt(this.character, worldState, recentHistory);
 
+    const characterName = this.character.name.toLowerCase().replace(/\s+/g, '-');
     const result = await queryLLMJSON(prompt, {
       systemPrompt: PLAYER_SYSTEM_PROMPT,
-      model: this.model
+      model: this.model,
+      role: `player-${characterName}`
     });
 
     return {

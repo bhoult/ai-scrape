@@ -78,7 +78,16 @@ Respond with a JSON object containing:
       "personality": "Key personality traits",
       "goals": "What this character wants",
       "inventory": [],
-      "status": "healthy"
+      "status": "healthy",
+      "stats": {
+        "health": 100,
+        "stamina": 100,
+        "hunger": 0,
+        "thirst": 0,
+        "strength": 50,
+        "dexterity": 50,
+        "encumbrance": 0
+      }
     }
   ],
   "worldSummary": "Brief summary of the current situation"
@@ -120,6 +129,17 @@ export function playerActionPrompt(character, worldState, recentHistory) {
   const items = safeJoin(loc.items) || 'Nothing notable';
   const others = safeJoin(worldState.characters?.filter(c => c.id !== character.id).map(c => c.name)) || 'No one else';
 
+  const stats = character.stats || {};
+  const statsStr = [
+    `Health: ${stats.health ?? 100}%`,
+    `Stamina: ${stats.stamina ?? 100}%`,
+    `Hunger: ${stats.hunger ?? 0}%`,
+    `Thirst: ${stats.thirst ?? 0}%`,
+    `Strength: ${stats.strength ?? 50}%`,
+    `Dexterity: ${stats.dexterity ?? 50}%`,
+    `Encumbrance: ${stats.encumbrance ?? 0}%`
+  ].join(', ');
+
   return `You are ${character.name}.
 
 CURRENT TIME: ${formatTime(worldState.time)}
@@ -131,6 +151,9 @@ YOUR CHARACTER:
 - Goals: ${character.goals}
 - Inventory: ${inventory}
 - Status: ${character.status}
+- Stats: ${statsStr}
+
+Consider your physical condition when deciding actions. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Encumbrance affects mobility.
 
 CURRENT SITUATION:
 Location: ${loc.name || 'Unknown'}
@@ -179,7 +202,10 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
       appearance.face,
       appearance.distinguishing
     ].filter(Boolean).join(', ');
-    return `- ${c.name}: ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}, inventory: [${safeJoin(c.inventory) || 'nothing'}]`;
+    const stats = c.stats || {};
+    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% ENC:${stats.encumbrance ?? 0}%`;
+    return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}, inventory: [${safeJoin(c.inventory) || 'nothing'}]
+    Stats: ${statsStr}`;
   }).join('\n');
 
   const dmInstructionsText = dmInstructions
@@ -220,7 +246,11 @@ CHARACTER ACTIONS THIS TURN:
 ${actionsText}
 ${dmInstructionsText}
 Resolve these actions realistically. Consider:
-- What succeeds, fails, or has unexpected outcomes
+- What succeeds, fails, or has unexpected outcomes based on CHARACTER STATS
+- High strength = better physical tasks, high dexterity = better fine motor/agility tasks
+- Low health/stamina = actions may fail or have reduced effectiveness
+- High hunger (>50%) or thirst (>50%) = impaired judgment and physical performance
+- High encumbrance (>70%) = movement penalties, may drop items
 - How characters interact with each other
 - Environmental effects and discoveries
 - Natural consequences of actions

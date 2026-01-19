@@ -16,7 +16,8 @@ export class DMAgent {
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
-      model: this.model
+      model: this.model,
+      role: 'dm-init'
     });
 
     const log = {
@@ -39,7 +40,8 @@ export class DMAgent {
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
-      model: this.model
+      model: this.model,
+      role: 'dm-resolve'
     });
 
     const log = {

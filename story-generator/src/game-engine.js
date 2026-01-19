@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { WorldState } from './world-state.js';
 import { DMAgent } from './agents/dm-agent.js';
 import { PlayerAgent } from './agents/player-agent.js';
-import { queryLLMJSON } from './fireworks.js';
+import { queryLLMJSON, setLogsDir, logImagePrompt } from './fireworks.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORIES_DIR = join(__dirname, '../stories');
@@ -167,6 +167,9 @@ export class GameEngine {
     const metadata = this.buildImageMetadata(turn, sceneDescription, narrative, imagePrompt, promptOrder);
     const metadataJson = JSON.stringify(metadata);
 
+    // Log the image prompt
+    logImagePrompt(imagePrompt, { turn, sceneDescription, promptOrder }, 'flux');
+
     // Always save the scene description record so we can regenerate later if needed
     const record = { turn, description: sceneDescription, narrative, imagePath: imageName, success: false };
 
@@ -237,44 +240,60 @@ export class GameEngine {
     return `Day ${time.day}, ${hour}:${minute}`;
   }
 
-  async verifyCharacterStates(narrative, characters) {
+  async verifyCharacterStates(narrative, characters, elapsedMinutes = 30) {
     // Build character descriptions for the prompt
     const charDescriptions = characters.map(c => {
-      return `- ${c.name} (id: ${c.id}): clothing="${c.clothing}", status="${c.status}", inventory=[${(c.inventory || []).join(', ')}]`;
+      const stats = c.stats || {};
+      return `- ${c.name} (id: ${c.id}): clothing="${c.clothing}", status="${c.status}", inventory=[${(c.inventory || []).join(', ')}]
+    Stats: health=${stats.health ?? 100}%, stamina=${stats.stamina ?? 100}%, hunger=${stats.hunger ?? 0}%, thirst=${stats.thirst ?? 0}%, strength=${stats.strength ?? 50}%, dexterity=${stats.dexterity ?? 50}%, encumbrance=${stats.encumbrance ?? 0}%`;
     }).join('\n');
 
-    const prompt = `Based on this narrative, check if any character states need to be updated.
+    const prompt = `Based on this narrative and elapsed time, update character states and stats.
 
 NARRATIVE:
 ${narrative}
 
+ELAPSED TIME: ${elapsedMinutes} minutes
+
 CURRENT CHARACTER STATES:
 ${charDescriptions}
 
-If the narrative describes any changes to clothing, status, or inventory that are NOT reflected in the current states above, return updates. Otherwise return an empty array.
+Update clothing, status, inventory, AND STATS for each character based on what happened.
 
-IMPORTANT:
-- If clothing was removed, destroyed, or changed, set clothingChange to the NEW complete outfit (e.g., "naked", "shirtless in jeans", "torn dress")
-- If status changed (injured, tired, wet, sunburned, etc.), set statusChange
-- If items were picked up or dropped, set inventoryAdd/inventoryRemove
+STAT GUIDELINES (all values 0-100):
+- health: Decrease for injuries, increase slowly with rest/medical care
+- stamina: Decrease with physical exertion (running, fighting, climbing), recover with rest
+- hunger: Increase ~2-5% per hour of activity, decrease when eating
+- thirst: Increase ~3-8% per hour (faster in heat/exertion), decrease when drinking
+- strength/dexterity: Usually stable, but temporary penalties from injury/exhaustion
+- encumbrance: Based on inventory weight (0=empty hands, 100=overburdened)
 
 Respond with JSON only:
 {
   "characterUpdates": [
     {
       "id": "character_id",
-      "clothingChange": "new complete clothing description or null",
-      "statusChange": "new status or null",
+      "clothingChange": "new complete clothing description or null if unchanged",
+      "statusChange": "new status or null if unchanged",
       "inventoryAdd": [],
-      "inventoryRemove": []
+      "inventoryRemove": [],
+      "statsChange": {
+        "health": 95,
+        "stamina": 80,
+        "hunger": 15,
+        "thirst": 20,
+        "strength": 50,
+        "dexterity": 50,
+        "encumbrance": 10
+      }
     }
   ]
 }
 
-If no updates needed, respond with: {"characterUpdates": []}`;
+ALWAYS include statsChange for EVERY character, even if just natural hunger/thirst increase from elapsed time.`;
 
     try {
-      const result = await queryLLMJSON(prompt, { model: this.model });
+      const result = await queryLLMJSON(prompt, { model: this.model, role: 'verify-state' });
       return result.parsed?.characterUpdates || [];
     } catch (err) {
       console.error('Error verifying character states:', err.message);
@@ -284,6 +303,10 @@ If no updates needed, respond with: {"characterUpdates": []}`;
 
   getHistoryDir() {
     return join(this.getStoryDir(), 'history');
+  }
+
+  getLogsDir() {
+    return join(this.getStoryDir(), 'logs');
   }
 
   saveStory() {
@@ -364,6 +387,9 @@ If no updates needed, respond with: {"characterUpdates": []}`;
     this.createdAt = data.createdAt;
     this.storyContent = data.storyContent || [];
     this.sceneDescriptions = Array.isArray(data.sceneDescriptions) ? data.sceneDescriptions : [];
+
+    // Set logs directory for this story
+    setLogsDir(this.getLogsDir());
 
     // Load turn snapshots from history folder
     const historyDir = join(storyDir, 'history');
@@ -719,6 +745,9 @@ Respond with ONLY a JSON object:
     this.storyContent = [];
     this.createdAt = new Date().toISOString();
 
+    // Set logs directory for this story
+    setLogsDir(this.getLogsDir());
+
     const { data, llmLog } = await this.dmAgent.initializeWorld(seed);
     this.llmLog.push(llmLog);
 
@@ -812,8 +841,15 @@ Respond with ONLY a JSON object:
 
     this.worldState.applyChanges(resolution.worldChanges);
 
+    // Calculate elapsed time for stat updates
+    const oldTime = stateSnapshot.time || { day: 1, hour: 8, minute: 0 };
+    const newTime = resolution.time || oldTime;
+    const oldMinutes = (oldTime.day * 24 * 60) + (oldTime.hour * 60) + oldTime.minute;
+    const newMinutes = (newTime.day * 24 * 60) + (newTime.hour * 60) + newTime.minute;
+    const elapsedMinutes = Math.max(0, newMinutes - oldMinutes);
+
     // Verify and update character states based on narrative
-    const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters);
+    const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters, elapsedMinutes);
     if (verifiedUpdates && verifiedUpdates.length > 0) {
       console.log(`[Turn ${this.worldState.turnNumber + 1}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
       this.worldState.applyChanges({ characterUpdates: verifiedUpdates });

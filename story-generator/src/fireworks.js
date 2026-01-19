@@ -4,25 +4,34 @@ import { fileURLToPath } from 'url';
 import { FIREWORKS_API_URL, FIREWORKS_MODEL, AVAILABLE_MODELS, getApiKey, LLM_CONFIG } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOGS_DIR = join(__dirname, '../logs');
 
 const MAX_RETRIES = 5;
+
+// Store the current story logs directory (set by game engine)
+let currentLogsDir = null;
+
+export function setLogsDir(dir) {
+  currentLogsDir = dir;
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function logLLMCall(request, response, modelKey, elapsed) {
+function logLLMCall(request, response, modelKey, elapsed, role = 'llm') {
+  if (!currentLogsDir) return;
+
   try {
-    mkdirSync(LOGS_DIR, { recursive: true });
+    mkdirSync(currentLogsDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const modelName = modelKey || 'default';
-    const filename = `${timestamp}_${modelName}.json`;
-    const filepath = join(LOGS_DIR, filename);
+    const filename = `${timestamp}_${role}_${modelName}.json`;
+    const filepath = join(currentLogsDir, filename);
 
     const logData = {
       timestamp: new Date().toISOString(),
+      role,
       model: modelKey,
       elapsed,
       request,
@@ -35,6 +44,30 @@ function logLLMCall(request, response, modelKey, elapsed) {
   }
 }
 
+export function logImagePrompt(prompt, metadata, modelKey = 'flux') {
+  if (!currentLogsDir) return;
+
+  try {
+    mkdirSync(currentLogsDir, { recursive: true });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${timestamp}_image_${modelKey}.json`;
+    const filepath = join(currentLogsDir, filename);
+
+    const logData = {
+      timestamp: new Date().toISOString(),
+      type: 'image',
+      model: modelKey,
+      prompt,
+      metadata
+    };
+
+    writeFileSync(filepath, JSON.stringify(logData, null, 2));
+  } catch (err) {
+    console.error('Error writing image log:', err.message);
+  }
+}
+
 export function getModelId(modelKey) {
   if (modelKey && AVAILABLE_MODELS[modelKey]) {
     return AVAILABLE_MODELS[modelKey].id;
@@ -43,7 +76,7 @@ export function getModelId(modelKey) {
 }
 
 export async function queryLLM(prompt, options = {}) {
-  const { systemPrompt = null, jsonMode = false, model = null } = options;
+  const { systemPrompt = null, jsonMode = false, model = null, role = 'llm' } = options;
 
   const apiKey = getApiKey();
   const messages = [];
@@ -111,7 +144,7 @@ export async function queryLLM(prompt, options = {}) {
     const content = data.choices?.[0]?.message?.content;
 
     // Log the request and response
-    logLLMCall({ messages, ...body }, data, model, elapsed);
+    logLLMCall({ messages, ...body }, data, model, elapsed, role);
 
     return {
       content,
