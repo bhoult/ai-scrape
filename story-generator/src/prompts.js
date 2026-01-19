@@ -423,6 +423,8 @@ CHARACTER ACTIONS THIS TURN:
 ${actionsText}
 ${dmInstructionsText}
 Resolve these actions realistically. Consider:
+- Characters can ONLY use items in their INVENTORY (listed above for each character)
+- If a character tries to use an item they don't have, the action FAILS
 - What succeeds, fails, or has unexpected outcomes based on CHARACTER STATS
 - High strength = better physical tasks, high dexterity = better fine motor/agility tasks
 - Low health/stamina = actions may fail or have reduced effectiveness
@@ -455,11 +457,25 @@ DEATH:
 - Dead characters become objects ("dead body of [name]") and are removed from play
 - Their inventory remains on their body and can be looted
 
-DISCOVERED OBJECTS:
+DISCOVERED OBJECTS & INVENTORY (CRITICAL):
+- discoveredObjects = objects in the world that characters have found
+- character inventory = objects the character is carrying
+- AN OBJECT CAN ONLY BE IN ONE PLACE: either in discoveredObjects OR in a character's inventory, NEVER BOTH
+
+When a character PICKS UP or TAKES an object from discoveredObjects:
+1. Add the object's ID to removedObjects array (removes it from the world)
+2. Add the object name to the character's inventoryAdd array (adds it to their inventory)
+
+When a character DROPS or PLACES an object:
+1. Add the object name to the character's inventoryRemove array
+2. Add a new entry to discoveredObjects with the object at its new position
+
+Example - Sarah picks up a canteen (obj_canteen):
+- removedObjects: ["obj_canteen"]
+- characterUpdates: [{ id: "char_sarah", inventoryAdd: ["canteen"], ... }]
+
 - Track significant objects/locations found (water sources, shelter, caches, landmarks, vehicles, etc.)
 - Each discovered object has: id, name, description, position (x, y in meters), status
-- Add new discoveries to discoveredObjects array when characters find something significant
-- Remove objects via removedObjects array when they are depleted, destroyed, or no longer relevant
 - These help characters navigate and plan by showing known resources and landmarks
 
 MANDATORY - characterUpdates MUST reflect ALL state changes:

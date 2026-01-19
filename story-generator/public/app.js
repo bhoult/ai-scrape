@@ -704,7 +704,16 @@ function renderCharacterDisplay(characters) {
         </div>`;
     }
 
-    html += `</div></div>`;
+    html += `</div>`;
+
+    // Add inventory section
+    const inventory = char.inventory || [];
+    html += `<div class="character-inventory">
+      <span class="inventory-label">Inventory:</span>
+      <span class="inventory-items">${inventory.length > 0 ? inventory.join(', ') : 'Nothing'}</span>
+    </div>`;
+
+    html += `</div>`;
   }
 
   characterDisplay.innerHTML = html;

@@ -475,6 +475,24 @@ main {
 .stat-item .stat-bar-fill.anger { background: #f43f5e; }
 .stat-item .stat-bar-fill.fear { background: #8b5cf6; }
 
+.character-inventory {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #333;
+  font-size: 11px;
+}
+
+.character-inventory .inventory-label {
+  color: #888;
+  text-transform: uppercase;
+  font-size: 9px;
+  margin-right: 0.5rem;
+}
+
+.character-inventory .inventory-items {
+  color: #ccc;
+}
+
 .stat-change {
   font-size: 10px;
   font-weight: bold;
