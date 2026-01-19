@@ -727,6 +727,14 @@ Respond with ONLY a JSON object:
     );
     turnLogs.push(resolution.llmLog);
 
+    // Log character updates for debugging
+    const charUpdates = resolution.worldChanges?.characterUpdates;
+    if (charUpdates && charUpdates.length > 0) {
+      console.log(`[Turn ${this.worldState.turnNumber + 1}] Character updates:`, JSON.stringify(charUpdates, null, 2));
+    } else {
+      console.log(`[Turn ${this.worldState.turnNumber + 1}] No character updates in response`);
+    }
+
     this.worldState.applyChanges(resolution.worldChanges);
     this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
 
