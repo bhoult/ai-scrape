@@ -282,18 +282,30 @@ If no updates needed, respond with: {"characterUpdates": []}`;
     }
   }
 
+  getHistoryDir() {
+    return join(this.getStoryDir(), 'history');
+  }
+
   saveStory() {
     if (!this.storyId) return;
 
     const storyDir = this.getStoryDir();
+    const historyDir = this.getHistoryDir();
     mkdirSync(storyDir, { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
 
     // Build markdown with images
     const mdContent = this.buildMarkdownWithImages();
     const mdPath = join(storyDir, 'story.md');
     writeFileSync(mdPath, mdContent);
 
-    // Save state JSON
+    // Save each turn snapshot to separate file in history folder
+    for (const snapshot of this.turnSnapshots) {
+      const turnFile = join(historyDir, `turn-${snapshot.turn.toString().padStart(3, '0')}.json`);
+      writeFileSync(turnFile, JSON.stringify(snapshot, null, 2));
+    }
+
+    // Save current state JSON (without turnSnapshots)
     const jsonPath = join(storyDir, 'state.json');
     const stateData = {
       seed: this.seed,
@@ -303,8 +315,7 @@ If no updates needed, respond with: {"characterUpdates": []}`;
       model: this.model,
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
-      sceneDescriptions: this.sceneDescriptions,
-      turnSnapshots: this.turnSnapshots
+      sceneDescriptions: this.sceneDescriptions
     };
     writeFileSync(jsonPath, JSON.stringify(stateData, null, 2));
   }
@@ -353,7 +364,17 @@ If no updates needed, respond with: {"characterUpdates": []}`;
     this.createdAt = data.createdAt;
     this.storyContent = data.storyContent || [];
     this.sceneDescriptions = Array.isArray(data.sceneDescriptions) ? data.sceneDescriptions : [];
-    this.turnSnapshots = Array.isArray(data.turnSnapshots) ? data.turnSnapshots : [];
+
+    // Load turn snapshots from history folder
+    const historyDir = join(storyDir, 'history');
+    this.turnSnapshots = [];
+    if (existsSync(historyDir)) {
+      const files = readdirSync(historyDir).filter(f => f.startsWith('turn-') && f.endsWith('.json')).sort();
+      for (const file of files) {
+        const snapshot = JSON.parse(readFileSync(join(historyDir, file), 'utf-8'));
+        this.turnSnapshots.push(snapshot);
+      }
+    }
 
     // Restore model from saved state (constructor model is ignored, use saved model)
     if (data.model) {
@@ -507,6 +528,16 @@ If no updates needed, respond with: {"characterUpdates": []}`;
 
     // Remove scene descriptions for deleted turns
     this.sceneDescriptions = this.sceneDescriptions.filter(s => s.turn < turn);
+
+    // Remove history files for deleted turns
+    const historyDir = this.getHistoryDir();
+    for (let t = turn; t <= this.worldState.turnNumber; t++) {
+      const historyFile = join(historyDir, `turn-${t.toString().padStart(3, '0')}.json`);
+      if (existsSync(historyFile)) {
+        unlinkSync(historyFile);
+        console.log(`Deleted history file for turn ${t}`);
+      }
+    }
 
     // Remove turn snapshots for deleted turns
     this.turnSnapshots = this.turnSnapshots.filter(s => s.turn < turn);
