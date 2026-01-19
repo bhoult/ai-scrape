@@ -561,16 +561,16 @@ function renderCharacterDisplay(characters) {
   }
 
   const statLabels = {
-    health: 'HP',
-    stamina: 'STM',
-    hunger: 'HNG',
-    thirst: 'THR',
-    strength: 'STR',
-    dexterity: 'DEX',
-    encumbrance: 'ENC',
-    sanity: 'SAN',
-    anger: 'ANG',
-    fear: 'FER'
+    health: 'Health',
+    stamina: 'Stamina',
+    hunger: 'Hunger',
+    thirst: 'Thirst',
+    strength: 'Strength',
+    dexterity: 'Dexterity',
+    encumbrance: 'Encumbrance',
+    sanity: 'Sanity',
+    anger: 'Anger',
+    fear: 'Fear'
   };
 
   const statDefaults = {
