@@ -24,7 +24,7 @@ export const AVAILABLE_MODELS = {
   }
 };
 
-export const DEFAULT_MODEL = 'minimax-m2p1';
+export const DEFAULT_MODEL = 'deepseek-v3p2';
 
 // For backward compatibility
 export const FIREWORKS_MODEL = AVAILABLE_MODELS[DEFAULT_MODEL].id;

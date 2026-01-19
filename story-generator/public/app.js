@@ -95,7 +95,7 @@ function hideLoading() {
   loading.classList.add('hidden');
 }
 
-function renderNarrative(narrative, turn, characterActions = null, time = null) {
+function renderNarrative(narrative, turn, characterActions = null, time = null, thinkTalk = null) {
   const entry = document.createElement('div');
   entry.className = 'narrative-entry';
   entry.dataset.turn = turn;
@@ -117,17 +117,78 @@ function renderNarrative(narrative, turn, characterActions = null, time = null) 
   }
   entry.appendChild(turnMarker);
 
+  // Phase 1: Think and Talk - what each character observed and said
+  if (thinkTalk && thinkTalk.length > 0) {
+    const thinkTalkDiv = document.createElement('div');
+    thinkTalkDiv.className = 'think-talk-section';
+    thinkTalkDiv.innerHTML = '<div class="section-header">Discussion</div>';
+
+    thinkTalkDiv.innerHTML += thinkTalk.map(tt => {
+      let html = `<div class="think-talk-entry">`;
+      html += `<span class="character-name">${tt.character}</span>`;
+
+      // What they observed from last turn
+      if (tt.observed && tt.observed.length > 0) {
+        html += `<div class="observed">`;
+        tt.observed.forEach(obs => {
+          if (obs.action) {
+            html += `<span class="observed-action">Saw ${obs.name}: ${obs.action}</span>`;
+          }
+          if (obs.dialogue) {
+            html += `<span class="observed-dialogue">Heard ${obs.name}: "${obs.dialogue}"</span>`;
+          }
+        });
+        html += `</div>`;
+      }
+
+      // Their thinking
+      if (tt.thinking) {
+        html += `<div class="thinking"><em>${tt.thinking}</em></div>`;
+      }
+
+      // What they say
+      if (tt.speech) {
+        html += `<div class="speech">"${tt.speech}"</div>`;
+      }
+
+      html += `</div>`;
+      return html;
+    }).join('');
+
+    entry.appendChild(thinkTalkDiv);
+  }
+
+  // Phase 2: Actions - what each character did after hearing others
   if (characterActions && characterActions.length > 0) {
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'character-actions';
-    actionsDiv.innerHTML = characterActions.map(ca => {
-      let html = `<div class="character-action"><span class="character-name">${ca.character}:</span> ${ca.action}`;
-      if (ca.dialogue) {
-        html += ` <span class="dialogue">"${ca.dialogue}"</span>`;
+    actionsDiv.innerHTML = '<div class="section-header">Actions</div>';
+
+    actionsDiv.innerHTML += characterActions.map(ca => {
+      let html = `<div class="character-action">`;
+      html += `<span class="character-name">${ca.character}</span>`;
+
+      // What they heard from think/talk phase
+      if (ca.heardSpeech && ca.heardSpeech.length > 0) {
+        html += `<div class="heard-speech">`;
+        ca.heardSpeech.forEach(hs => {
+          html += `<span class="heard">Heard ${hs.name}: "${hs.said}"</span>`;
+        });
+        html += `</div>`;
       }
-      html += '</div>';
+
+      // Their action
+      html += `<div class="action">${ca.action}</div>`;
+
+      // What they say while acting
+      if (ca.dialogue) {
+        html += `<div class="action-dialogue">"${ca.dialogue}"</div>`;
+      }
+
+      html += `</div>`;
       return html;
     }).join('');
+
     entry.appendChild(actionsDiv);
   }
 
@@ -142,7 +203,8 @@ function renderNarrative(narrative, turn, characterActions = null, time = null) 
   }
 
   const narrativeP = document.createElement('p');
-  narrativeP.textContent = narrative;
+  narrativeP.className = 'dm-narrative';
+  narrativeP.innerHTML = '<span class="section-header">Narrative</span>' + narrative;
   entry.appendChild(narrativeP);
 
   storyContent.appendChild(entry);
@@ -210,38 +272,49 @@ function addRegenerateButton(turn, container) {
   const btnContainer = document.createElement('div');
   btnContainer.className = 'image-buttons';
 
-  // Characters first button
-  const charFirstBtn = document.createElement('button');
-  charFirstBtn.className = 'regenerate-btn';
-  charFirstBtn.textContent = '↻C';
-  charFirstBtn.title = 'Regenerate with characters first in prompt';
-  charFirstBtn.addEventListener('click', (e) => {
+  // Characters focus button
+  const charBtn = document.createElement('button');
+  charBtn.className = 'regenerate-btn';
+  charBtn.textContent = '↻C';
+  charBtn.title = 'Regenerate with characters as focus (includes character descriptions)';
+  charBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    regenerateImage(turn, container, 'characters-first');
+    regenerateImage(turn, container, 'characters');
   });
-  btnContainer.appendChild(charFirstBtn);
+  btnContainer.appendChild(charBtn);
 
-  // Scene first button
-  const sceneFirstBtn = document.createElement('button');
-  sceneFirstBtn.className = 'regenerate-btn';
-  sceneFirstBtn.textContent = '↻S';
-  sceneFirstBtn.title = 'Regenerate with scene first in prompt';
-  sceneFirstBtn.addEventListener('click', (e) => {
+  // Landscape focus button
+  const landscapeBtn = document.createElement('button');
+  landscapeBtn.className = 'regenerate-btn';
+  landscapeBtn.textContent = '↻L';
+  landscapeBtn.title = 'Regenerate with landscape as focus (no character details)';
+  landscapeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    regenerateImage(turn, container, 'scene-first');
+    regenerateImage(turn, container, 'landscape');
   });
-  btnContainer.appendChild(sceneFirstBtn);
+  btnContainer.appendChild(landscapeBtn);
 
-  // Environment only button
-  const envOnlyBtn = document.createElement('button');
-  envOnlyBtn.className = 'regenerate-btn';
-  envOnlyBtn.textContent = '↻E';
-  envOnlyBtn.title = 'Regenerate with environment only (no characters or scene)';
-  envOnlyBtn.addEventListener('click', (e) => {
+  // Object focus button
+  const objectBtn = document.createElement('button');
+  objectBtn.className = 'regenerate-btn';
+  objectBtn.textContent = '↻O';
+  objectBtn.title = 'Regenerate with object/discovery as focus';
+  objectBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    regenerateImage(turn, container, 'environment-only');
+    regenerateImage(turn, container, 'object');
   });
-  btnContainer.appendChild(envOnlyBtn);
+  btnContainer.appendChild(objectBtn);
+
+  // Phenomenon focus button
+  const phenomenonBtn = document.createElement('button');
+  phenomenonBtn.className = 'regenerate-btn';
+  phenomenonBtn.textContent = '↻P';
+  phenomenonBtn.title = 'Regenerate with phenomenon as focus (weather, wildlife, event)';
+  phenomenonBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    regenerateImage(turn, container, 'phenomenon');
+  });
+  btnContainer.appendChild(phenomenonBtn);
 
   const metadataBtn = document.createElement('button');
   metadataBtn.className = 'metadata-btn';
@@ -256,18 +329,27 @@ function addRegenerateButton(turn, container) {
   container.appendChild(btnContainer);
 }
 
-async function regenerateImage(turn, container, promptOrder = 'characters-first') {
-  const btns = container.querySelectorAll('.regenerate-btn');
-  btns.forEach(btn => {
-    btn.disabled = true;
-    btn.textContent = '...';
-  });
+async function regenerateImage(turn, container, sceneFocus = 'characters') {
+  // Show loading state on the container
+  const existingImg = container.querySelector('img');
+  const existingButtons = container.querySelector('.image-buttons');
+
+  // Add regenerating overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'image-regenerating';
+  overlay.innerHTML = `<div class="regenerate-spinner"></div><div class="regenerate-text">Regenerating<br>(${sceneFocus})</div>`;
+  container.appendChild(overlay);
+
+  // Disable buttons
+  if (existingButtons) {
+    existingButtons.querySelectorAll('button').forEach(btn => btn.disabled = true);
+  }
 
   try {
     const response = await fetch('/api/game/regenerate-image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ turn, promptOrder })
+      body: JSON.stringify({ turn, sceneFocus })
     });
 
     const data = await response.json();
@@ -388,8 +470,8 @@ async function showImageMetadata(turn) {
     }
 
     // Prompt order
-    if (metadata.promptOrder) {
-      html += `<div class="metadata-section"><strong>Prompt Order:</strong><p>${escapeHtml(metadata.promptOrder)}</p></div>`;
+    if (metadata.sceneFocus) {
+      html += `<div class="metadata-section"><strong>Scene Focus:</strong><p>${escapeHtml(metadata.sceneFocus)}</p></div>`;
     }
 
     // Generation parameters
@@ -771,7 +853,7 @@ async function advanceTurn() {
       turnCounter.textContent = `Turn: ${currentTurn}`;
       timeDisplay.textContent = formatTime(data.worldState.time);
 
-      renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time);
+      renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time, data.thinkTalk);
       renderWorldState(data.worldState);
     renderCharacterDisplay(data.worldState.characters);
 

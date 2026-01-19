@@ -7,10 +7,10 @@ export class WorldState {
     this.summary = '';
     this.currentLocation = null;
     this.locations = new Map();
-    this.items = new Map();
     this.npcs = new Map();
     this.characters = [];
     this.deadBodies = [];          // Dead characters converted to objects
+    this.discoveredObjects = [];   // Significant objects found with positions
     this.flags = new Map();
     this.history = [];
     this.lastTurnActions = {};     // Store actions and dialogue from last turn for proximity communication
@@ -52,6 +52,9 @@ export class WorldState {
     }
     if (Array.isArray(dmResponse.tensions)) {
       this.tensions = dmResponse.tensions;
+    }
+    if (Array.isArray(dmResponse.discoveredObjects)) {
+      this.discoveredObjects = dmResponse.discoveredObjects;
     }
   }
 
@@ -156,6 +159,36 @@ export class WorldState {
         }
       }
     }
+
+    // Handle discovered object updates
+    if (Array.isArray(changes.discoveredObjects)) {
+      for (const obj of changes.discoveredObjects) {
+        if (!obj || !obj.id) continue;
+        const existing = this.discoveredObjects.find(o => o.id === obj.id);
+        if (existing) {
+          // Update existing object
+          if (obj.position) existing.position = obj.position;
+          if (obj.description) existing.description = obj.description;
+          if (obj.status) existing.status = obj.status;
+        } else {
+          // Add new discovered object
+          this.discoveredObjects.push({
+            id: obj.id,
+            name: obj.name || obj.id,
+            description: obj.description || '',
+            position: obj.position || null,
+            status: obj.status || 'discovered',
+            discoveredTurn: this.turnNumber
+          });
+        }
+      }
+    }
+
+    // Handle removed objects (picked up, destroyed, etc.)
+    if (Array.isArray(changes.removedObjects)) {
+      const removeIds = new Set(changes.removedObjects);
+      this.discoveredObjects = this.discoveredObjects.filter(o => !removeIds.has(o.id));
+    }
   }
 
   advanceTurn(narrative, summary, time, arcUpdates = null) {
@@ -193,6 +226,7 @@ export class WorldState {
       currentLocation: this.currentLocation,
       characters: this.characters,
       deadBodies: this.deadBodies,
+      discoveredObjects: this.discoveredObjects,
       history: this.history,
       lastTurnActions: this.lastTurnActions,
       time: this.time,
@@ -296,14 +330,29 @@ export class WorldState {
     return deadCharacters;
   }
 
-  // Get all objects (items + dead bodies) with positions
+  // Get all objects (discovered objects + dead bodies) with positions
   getPositionedObjects() {
     const objects = [];
+
+    // Add discovered objects
+    for (const obj of this.discoveredObjects) {
+      if (obj.position) {
+        objects.push({
+          id: obj.id,
+          name: obj.name,
+          description: obj.description,
+          position: obj.position,
+          status: obj.status,
+          type: 'object'
+        });
+      }
+    }
 
     // Add dead bodies
     for (const body of this.deadBodies) {
       if (body.position) {
         objects.push({
+          id: body.id,
           name: body.name,
           position: body.position,
           type: 'dead_body'
@@ -312,6 +361,14 @@ export class WorldState {
     }
 
     return objects;
+  }
+
+  // Get objects within range of a position
+  getNearbyObjects(position, range = COMMUNICATION_RANGE) {
+    if (!position) return [];
+    return this.getPositionedObjects().filter(obj => {
+      return this.getDistance(position, obj.position) <= range;
+    });
   }
 
   getTimeString() {

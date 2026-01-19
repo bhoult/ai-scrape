@@ -44,7 +44,7 @@ function logLLMCall(request, response, modelKey, elapsed, role = 'llm') {
   }
 }
 
-export function logImagePrompt(prompt, metadata, modelKey = 'flux') {
+export function logImagePrompt(prompt, metadata, modelKey = 'z-image-turbo') {
   if (!currentLogsDir) return;
 
   try {

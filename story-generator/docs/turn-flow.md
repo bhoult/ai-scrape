@@ -437,9 +437,9 @@ Respond with JSON only:
 
 ### Step 4: Image Generation
 
-The scene description from the DM response is sent to the Flux image model.
+The scene description from the DM response is sent to the image generation model.
 
-**Model:** `flux` (via Fireworks API)
+**Model:** `Tongyi-MAI/Z-Image-Turbo` (local GPU via draw.py)
 
 **Prompt (example):**
 ```

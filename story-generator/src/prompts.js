@@ -31,7 +31,12 @@ ${seed}
 Respond with a JSON object containing:
 {
   "narrative": "Opening paragraph describing the scene (2-3 sentences)",
-  "sceneDescription": "A vivid visual description for illustration (1 sentence describing the scene, characters, setting, lighting, mood - suitable for image generation, e.g., 'Two weary travelers stand beside plane wreckage in a vast desert landscape under harsh midday sun')",
+  "sceneFocus": "characters|landscape|object|phenomenon - what should dominate the image",
+  "sceneVisuals": {
+    "characterAction": "What the characters are doing (only used if sceneFocus is 'characters'), e.g., 'Sarah kneels examining footprints while Mike scans the horizon'",
+    "objectDescription": "Description of a discovered object (only used if sceneFocus is 'object'), e.g., 'A rusted canteen half-buried in sand near weathered rocks'",
+    "phenomenonDescription": "Description of weather/wildlife/event (only used if sceneFocus is 'phenomenon'), e.g., 'A massive dust storm wall rolls across the desert horizon'"
+  },
   "time": {
     "day": 1,
     "hour": 8,
@@ -48,6 +53,15 @@ Respond with a JSON object containing:
   "narrativeArc": "Current phase of the story (e.g., 'Introduction - characters assess their situation')",
   "majorEvents": ["The plane crashed in the desert"],
   "tensions": ["Immediate need for water", "Unknown location", "Limited supplies"],
+  "discoveredObjects": [
+    {
+      "id": "obj_unique_id",
+      "name": "Object Name",
+      "description": "What it is and its state",
+      "position": { "x": 0, "y": 0 },
+      "status": "discovered"
+    }
+  ],
   "location": {
     "id": "location_id",
     "name": "Location Name",
@@ -156,6 +170,27 @@ function buildPlayerContext(character, worldState, recentHistory) {
   const deadBodies = worldState.deadBodies || [];
   const bodiesHere = deadBodies.map(b => b.name).join(', ') || null;
 
+  // Build discovered objects with distance info (only show objects within visual range)
+  const VISUAL_RANGE = 100; // meters - characters can only see objects within this range
+  const discoveredObjects = worldState.discoveredObjects || [];
+  const visibleObjects = discoveredObjects.filter(obj => {
+    if (!obj.position) return true; // Show objects without position (legacy)
+    const dx = charPos.x - obj.position.x;
+    const dy = charPos.y - obj.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    return distance <= VISUAL_RANGE;
+  }).map(obj => {
+    if (!obj.position) return `${obj.name}`;
+    const dx = charPos.x - obj.position.x;
+    const dy = charPos.y - obj.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const distStr = distance <= 5 ? 'within reach' :
+                    distance <= 20 ? 'nearby' :
+                    distance <= 50 ? 'some distance away' : 'visible in the distance';
+    return `${obj.name} (${distStr})`;
+  });
+  const discoveredObjectsStr = visibleObjects.length > 0 ? visibleObjects.join(', ') : null;
+
   const stats = character.stats || {};
   const statsStr = [
     `Health: ${stats.health ?? 100}%`,
@@ -182,6 +217,7 @@ function buildPlayerContext(character, worldState, recentHistory) {
     items,
     others,
     bodiesHere,
+    discoveredObjectsStr,
     statsStr,
     positionStr
   };
@@ -228,11 +264,16 @@ Location: ${ctx.loc.name || 'Unknown'}
 ${ctx.loc.description || 'No description available'}
 
 Available exits: ${ctx.exits}
-Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}
+Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}${ctx.discoveredObjectsStr ? `\nDiscovered objects: ${ctx.discoveredObjectsStr}` : ''}
 Others present: ${ctx.others}
 ${observedSection}
 RECENT EVENTS:
 ${ctx.historyText}
+
+STORY CONTEXT:
+- Goal: ${worldState.storyGoal || 'Survive and find a way forward'}
+- Major events: ${(worldState.majorEvents && worldState.majorEvents.length > 0) ? worldState.majorEvents.join('; ') : 'None yet'}
+- Current tensions: ${(worldState.tensions && worldState.tensions.length > 0) ? worldState.tensions.join('; ') : 'None'}
 
 WORLD SUMMARY: ${worldState.summary}
 
@@ -278,7 +319,7 @@ Location: ${ctx.loc.name || 'Unknown'}
 ${ctx.loc.description || 'No description available'}
 
 Available exits: ${ctx.exits}
-Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}
+Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}${ctx.discoveredObjectsStr ? `\nDiscovered objects: ${ctx.discoveredObjectsStr}` : ''}
 Others present: ${ctx.others}
 ${dialogueSection}
 RECENT EVENTS:
@@ -335,6 +376,14 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
       }).join('\n')
     : '';
 
+  // Discovered objects info
+  const discoveredObjectsText = (worldState.discoveredObjects && worldState.discoveredObjects.length > 0)
+    ? '\nDISCOVERED OBJECTS:\n' + worldState.discoveredObjects.map(obj => {
+        const posStr = obj.position ? ` at (${obj.position.x}, ${obj.position.y})` : '';
+        return `- ${obj.name} (${obj.id})${posStr}: ${obj.description || 'no description'}`;
+      }).join('\n')
+    : '';
+
   const dmInstructionsText = dmInstructions
     ? `\nDM INSTRUCTIONS (incorporate these into the narrative):\n${dmInstructions}\n`
     : '';
@@ -368,7 +417,8 @@ Exits: ${safeJoin(loc.exits) || 'None apparent'}
 
 CHARACTERS:
 ${charactersText}
-${deadBodiesText}
+${deadBodiesText}${discoveredObjectsText}
+
 CHARACTER ACTIONS THIS TURN:
 ${actionsText}
 ${dmInstructionsText}
@@ -405,6 +455,13 @@ DEATH:
 - Dead characters become objects ("dead body of [name]") and are removed from play
 - Their inventory remains on their body and can be looted
 
+DISCOVERED OBJECTS:
+- Track significant objects/locations found (water sources, shelter, caches, landmarks, vehicles, etc.)
+- Each discovered object has: id, name, description, position (x, y in meters), status
+- Add new discoveries to discoveredObjects array when characters find something significant
+- Remove objects via removedObjects array when they are depleted, destroyed, or no longer relevant
+- These help characters navigate and plan by showing known resources and landmarks
+
 MANDATORY - characterUpdates MUST reflect ALL state changes:
 - clothingChange: REQUIRED if ANY clothing changes occur. Set to COMPLETE current outfit (e.g., "naked", "torn shirt and jeans", "shirtless in cargo pants"). DO NOT OMIT THIS.
 - statusChange: REQUIRED if status changes (injured, tired, wet, etc.)
@@ -416,7 +473,12 @@ MANDATORY - characterUpdates MUST reflect ALL state changes:
 Respond with JSON:
 {
   "narrative": "Paragraph describing what happens (3-5 sentences, vivid and engaging)",
-  "sceneDescription": "A vivid visual description for illustration (1 sentence capturing the key moment of this turn - characters, action, setting, lighting, mood - suitable for image generation)",
+  "sceneFocus": "characters|landscape|object|phenomenon - what should dominate the image. Vary this across turns for visual variety!",
+  "sceneVisuals": {
+    "characterAction": "What characters are doing (used when sceneFocus='characters')",
+    "objectDescription": "A discovered object/landmark (used when sceneFocus='object'), NO character names",
+    "phenomenonDescription": "Weather/wildlife/event (used when sceneFocus='phenomenon'), NO character names"
+  },
   "time": {
     "day": 1,
     "hour": 9,
@@ -459,6 +521,16 @@ Respond with JSON:
       "weather": "update if weather changes",
       "temperature": "update if temperature changes"
     },
+    "discoveredObjects": [
+      {
+        "id": "obj_water_source",
+        "name": "small spring",
+        "description": "A small natural spring with clear water bubbling up from rocks",
+        "position": { "x": 50, "y": 30 },
+        "status": "discovered"
+      }
+    ],
+    "removedObjects": ["obj_old_item_id"],
     "newLocation": null
   },
   "worldSummary": "Updated brief summary of situation after this turn"

@@ -154,15 +154,15 @@ app.post('/api/game/regenerate-image', async (req, res) => {
       return res.status(400).json({ error: 'No game in progress' });
     }
 
-    const { turn, promptOrder } = req.body;
+    const { turn, sceneFocus } = req.body;
     if (turn === undefined || turn === null) {
       return res.status(400).json({ error: 'Turn number is required' });
     }
 
-    const validOrders = ['characters-first', 'scene-first', 'environment-only'];
-    const order = validOrders.includes(promptOrder) ? promptOrder : 'characters-first';
+    const validFocus = ['characters', 'landscape', 'object', 'phenomenon'];
+    const focus = validFocus.includes(sceneFocus) ? sceneFocus : 'characters';
 
-    const result = await gameEngine.regenerateImage(turn, 3, order);
+    const result = await gameEngine.regenerateImage(turn, 3, focus);
 
     res.json({ success: true, imageGenerated: result?.success || false });
   } catch (error) {

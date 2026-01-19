@@ -55,7 +55,8 @@ export class DMAgent {
 
     return {
       narrative: result.parsed.narrative,
-      sceneDescription: result.parsed.sceneDescription,
+      sceneFocus: result.parsed.sceneFocus || 'characters',
+      sceneVisuals: result.parsed.sceneVisuals || {},
       worldChanges: result.parsed.worldChanges,
       worldSummary: result.parsed.worldSummary,
       time: result.parsed.time,

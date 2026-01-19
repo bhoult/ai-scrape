@@ -43,7 +43,7 @@ export class GameEngine {
     this.storyId = null;
     this.storyContent = [];
     this.createdAt = null;
-    this.sceneDescriptions = []; // Array of { turn, description, imagePath }
+    this.sceneDescriptions = []; // Array of { turn, sceneFocus, sceneVisuals, narrative, imagePath, success }
     this.model = model; // LLM model to use
     this.turnSnapshots = []; // Array of world state snapshots at each turn for rollback
   }
@@ -111,48 +111,94 @@ export class GameEngine {
     ].filter(Boolean).join(', ');
   }
 
-  buildImagePrompt(sceneDescription, promptOrder = 'characters-first') {
-    // Build prompt with configurable order
-    // 'characters-first': characters, scene, environment (default)
-    // 'scene-first': scene, characters, environment
-    // 'environment-only': only environment description (no characters or scene)
+  buildImagePrompt(sceneFocus, sceneVisuals, narrative = null) {
+    // Build prompt DETERMINISTICALLY based on scene focus
+    // Only include information relevant to the focus - no character info for non-character focuses
     const parts = [];
-
-    const characterDescs = this.buildCharacterDescriptions();
-    const charDesc = characterDescs.length > 0 ? characterDescs.join('. ') : null;
     const envDesc = this.buildEnvironmentDescription();
+    const visuals = sceneVisuals || {};
 
-    if (promptOrder === 'environment-only') {
-      // Only environment, no characters or scene
-      if (envDesc) parts.push(envDesc);
-    } else if (promptOrder === 'scene-first') {
-      if (sceneDescription) parts.push(sceneDescription);
-      if (charDesc) parts.push(charDesc);
-      if (envDesc) parts.push(envDesc);
-    } else {
-      // Characters first (default)
-      if (charDesc) parts.push(charDesc);
-      if (sceneDescription) parts.push(sceneDescription);
-      if (envDesc) parts.push(envDesc);
+    switch (sceneFocus) {
+      case 'characters':
+        // Characters are the focus - include full character descriptions + action + environment
+        const characterDescs = this.buildCharacterDescriptions();
+        if (characterDescs.length > 0) {
+          parts.push(characterDescs.join('. '));
+        }
+        if (visuals.characterAction) {
+          parts.push(visuals.characterAction);
+        }
+        if (envDesc) parts.push(envDesc);
+        break;
+
+      case 'landscape':
+        // Landscape focus - ONLY environment, no characters, no scene description
+        if (envDesc) parts.push(envDesc);
+        break;
+
+      case 'object':
+        // Object focus - object description + discovered objects details + environment
+        if (visuals.objectDescription) {
+          parts.push(visuals.objectDescription);
+        }
+        // Add discovered objects from world state for richer context
+        if (this.worldState?.discoveredObjects?.length > 0) {
+          const objectDescs = this.worldState.discoveredObjects
+            .filter(obj => obj.description)
+            .map(obj => `${obj.name}: ${obj.description}`)
+            .slice(0, 3); // Limit to 3 most relevant
+          if (objectDescs.length > 0) {
+            parts.push(objectDescs.join('. '));
+          }
+        }
+        if (envDesc) parts.push(envDesc);
+        break;
+
+      case 'phenomenon':
+        // Phenomenon focus - phenomenon description + narrative context + environment
+        if (visuals.phenomenonDescription) {
+          parts.push(visuals.phenomenonDescription);
+        }
+        // Add narrative context for richer description (first sentence only, no character names)
+        if (narrative) {
+          // Extract first sentence and remove character names
+          const firstSentence = narrative.split(/[.!?]/)[0];
+          if (firstSentence && firstSentence.length > 10) {
+            // Remove common character name patterns (capitalized words at start or after spaces)
+            const cleaned = firstSentence
+              .replace(/\b[A-Z][a-z]+\b/g, '') // Remove capitalized names
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (cleaned.length > 20) {
+              parts.push(cleaned);
+            }
+          }
+        }
+        if (envDesc) parts.push(envDesc);
+        break;
+
+      default:
+        // Fallback to environment only
+        if (envDesc) parts.push(envDesc);
     }
 
     return parts.join('. ');
   }
 
-  buildImageMetadata(turn, sceneDescription, narrative, prompt, promptOrder) {
+  buildImageMetadata(turn, sceneFocus, sceneVisuals, narrative, prompt) {
     return {
       turn,
-      sceneDescription,
+      sceneFocus,
+      sceneVisuals,
       narrative,
-      characters: this.buildCharacterDescriptions(),
+      characters: sceneFocus === 'characters' ? this.buildCharacterDescriptions() : [],
       environment: this.buildEnvironmentDescription(),
-      prompt,
-      promptOrder: promptOrder || 'characters-first'
+      prompt
     };
   }
 
-  async generateImage(turn, sceneDescription, narrative = null, maxRetries = 3, promptOrder = 'characters-first') {
-    if (!sceneDescription || !this.storyId) return null;
+  async generateImage(turn, sceneFocus = 'characters', sceneVisuals = {}, narrative = null, maxRetries = 3) {
+    if (!this.storyId) return null;
 
     const imagesDir = this.getImagesDir();
     mkdirSync(imagesDir, { recursive: true });
@@ -160,18 +206,18 @@ export class GameEngine {
     const imageName = `turn-${turn.toString().padStart(3, '0')}.jpg`;
     const imagePath = join(imagesDir, imageName);
 
-    // Build full prompt with configurable order
-    const imagePrompt = this.buildImagePrompt(sceneDescription, promptOrder);
+    // Build full prompt DETERMINISTICALLY based on scene focus
+    const imagePrompt = this.buildImagePrompt(sceneFocus, sceneVisuals, narrative);
 
-    // Build metadata to embed in image (includes prompt and order)
-    const metadata = this.buildImageMetadata(turn, sceneDescription, narrative, imagePrompt, promptOrder);
+    // Build metadata to embed in image
+    const metadata = this.buildImageMetadata(turn, sceneFocus, sceneVisuals, narrative, imagePrompt);
     const metadataJson = JSON.stringify(metadata);
 
     // Log the image prompt
-    logImagePrompt(imagePrompt, { turn, sceneDescription, promptOrder }, 'flux');
+    logImagePrompt(imagePrompt, { turn, sceneFocus, sceneVisuals }, 'z-image-turbo');
 
     // Always save the scene description record so we can regenerate later if needed
-    const record = { turn, description: sceneDescription, narrative, imagePath: imageName, success: false };
+    const record = { turn, sceneFocus, sceneVisuals, narrative, imagePath: imageName, success: false };
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -455,8 +501,9 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       position: c.position || { x: 0, y: 0 }
     }));
 
-    // Restore dead bodies and turn action tracking
+    // Restore dead bodies, discovered objects, and turn action tracking
     this.worldState.deadBodies = Array.isArray(data.worldState.deadBodies) ? data.worldState.deadBodies : [];
+    this.worldState.discoveredObjects = Array.isArray(data.worldState.discoveredObjects) ? data.worldState.discoveredObjects : [];
     this.worldState.lastTurnActions = data.worldState.lastTurnActions || data.worldState.lastTurnDialogue || {};
 
     // Recreate agents with model (only for living characters)
@@ -487,7 +534,9 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       const imagePath = join(imagesDir, scene.imagePath);
       if (!existsSync(imagePath)) {
         console.log(`Generating missing image for turn ${scene.turn}...`);
-        await this.generateImage(scene.turn, scene.description, scene.narrative);
+        const sceneFocus = scene.sceneFocus || 'characters';
+        const sceneVisuals = scene.sceneVisuals || {};
+        await this.generateImage(scene.turn, sceneFocus, sceneVisuals, scene.narrative);
       }
     }
   }
@@ -600,6 +649,8 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
     this.worldState.narrativeArc = ws.narrativeArc || '';
     this.worldState.majorEvents = Array.isArray(ws.majorEvents) ? [...ws.majorEvents] : [];
     this.worldState.tensions = Array.isArray(ws.tensions) ? [...ws.tensions] : [];
+    this.worldState.discoveredObjects = Array.isArray(ws.discoveredObjects) ? ws.discoveredObjects.map(o => ({ ...o })) : [];
+    this.worldState.deadBodies = Array.isArray(ws.deadBodies) ? ws.deadBodies.map(b => ({ ...b })) : [];
     this.worldState.history = Array.isArray(ws.history) ? [...ws.history] : [];
 
     // Restore current location
@@ -662,29 +713,19 @@ Respond with ONLY a JSON object:
     return result.parsed?.sceneDescription || result.sceneDescription || null;
   }
 
-  async regenerateImage(turn, maxRetries = 3, promptOrder = 'characters-first') {
-    // Find the scene description for this turn
+  async regenerateImage(turn, maxRetries = 3, sceneFocus = 'characters') {
+    // Find the scene record for this turn
     let scene = this.sceneDescriptions.find(s => s.turn === turn);
 
-    const imagesDir = this.getImagesDir();
-    const imageName = `turn-${turn.toString().padStart(3, '0')}.jpg`;
-    const imagePath = join(imagesDir, imageName);
+    // If no scene exists, we can't regenerate without sceneVisuals
+    if (!scene || !scene.sceneVisuals) {
+      console.log(`No scene visuals found for turn ${turn}, cannot regenerate with new focus`);
 
-    // If no scene description exists, try to generate one from the narrative
-    if (!scene) {
-      console.log(`No scene description found for turn ${turn}, generating new one...`);
-
-      // Find the narrative for this turn from history or storyContent
+      // Try to find narrative for fallback
       let narrative = null;
-
-      // Try history first (history[0] = opening, history[N] = turn N)
       if (turn < this.worldState.history.length) {
         narrative = this.worldState.history[turn];
       }
-
-      // Fallback to storyContent if not in history
-      // storyContent structure: [title, "## Opening", narrative0, "## Turn 1", narrative1, ...]
-      // For turn N: narrative is at index 2 + 2*N
       if (!narrative && this.storyContent) {
         const narrativeIndex = 2 + 2 * turn;
         if (narrativeIndex < this.storyContent.length) {
@@ -692,28 +733,26 @@ Respond with ONLY a JSON object:
         }
       }
 
-      if (!narrative) {
-        throw new Error(`Cannot find narrative for turn ${turn} to generate scene description (history length: ${this.worldState.history.length}, storyContent length: ${this.storyContent?.length || 0})`);
+      // Create minimal sceneVisuals based on focus
+      const sceneVisuals = {};
+      if (sceneFocus === 'characters') {
+        sceneVisuals.characterAction = narrative ? narrative.substring(0, 100) : 'Characters in the scene';
       }
 
-      const sceneDescription = await this.generateSceneDescription(turn, narrative);
-      if (!sceneDescription) {
-        throw new Error(`Failed to generate scene description for turn ${turn}`);
-      }
-
-      // Generate fresh image with new scene description
-      const result = await this.generateImage(turn, sceneDescription, narrative, maxRetries, promptOrder);
+      // Remove existing entry and generate new
+      this.sceneDescriptions = this.sceneDescriptions.filter(s => s.turn !== turn);
+      const result = await this.generateImage(turn, sceneFocus, sceneVisuals, narrative, maxRetries);
       this.saveStory();
       return { success: result?.success || false };
     }
 
-    // Always generate fresh with new prompt order (don't use --regenerate which uses embedded prompt)
-    console.log(`Generating image for turn ${turn} with ${promptOrder} ordering...`);
+    // Generate fresh image with user-specified focus but using stored sceneVisuals
+    console.log(`Generating image for turn ${turn} with sceneFocus=${sceneFocus}...`);
 
-    // Remove existing scene description entry so generateImage can add the new one
+    // Remove existing scene entry so generateImage can add the new one
     this.sceneDescriptions = this.sceneDescriptions.filter(s => s.turn !== turn);
 
-    const result = await this.generateImage(turn, scene.description, scene.narrative, maxRetries, promptOrder);
+    const result = await this.generateImage(turn, sceneFocus, scene.sceneVisuals, scene.narrative, maxRetries);
     this.saveStory();
     return { success: result?.success || false };
   }
@@ -778,8 +817,8 @@ Respond with ONLY a JSON object:
     this.storyContent.push(data.narrative);
 
     // Generate image for opening scene
-    if (data.sceneDescription) {
-      await this.generateImage(0, data.sceneDescription, data.narrative);
+    if (data.sceneFocus && data.sceneVisuals) {
+      await this.generateImage(0, data.sceneFocus, data.sceneVisuals, data.narrative);
     }
 
     // Save snapshot for turn 0 (opening) to enable rollback
@@ -946,8 +985,8 @@ Respond with ONLY a JSON object:
     this.storyContent.push(resolution.narrative);
 
     // Generate image for this turn
-    if (resolution.sceneDescription) {
-      await this.generateImage(this.worldState.turnNumber, resolution.sceneDescription, resolution.narrative);
+    if (resolution.sceneFocus && resolution.sceneVisuals) {
+      await this.generateImage(this.worldState.turnNumber, resolution.sceneFocus, resolution.sceneVisuals, resolution.narrative, 3);
     }
 
     // Save snapshot for this turn to enable rollback
@@ -961,10 +1000,21 @@ Respond with ONLY a JSON object:
 
     return {
       turn: this.worldState.turnNumber,
-      characterActions: characterActions.map(ca => ({
-        character: ca.character.name,
-        action: ca.action,
-        dialogue: ca.dialogue
+      // Phase 1: Think and Talk results
+      thinkTalk: thinkTalkResults.map(result => ({
+        character: result.character.name,
+        thinking: result.thinking,
+        intendedAction: result.intendedAction,
+        speech: result.speech,
+        observed: previousTurnInfoMap[result.character.id] || []
+      })),
+      // Phase 2: Action results
+      characterActions: actionResults.map(result => ({
+        character: result.character.name,
+        thinking: result.thinking,
+        action: result.action,
+        dialogue: result.dialogue,
+        heardSpeech: nearbySpeechMap[result.character.id] || []
       })),
       narrative: resolution.narrative,
       worldState: this.worldState.getStateSnapshot(),
