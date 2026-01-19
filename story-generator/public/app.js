@@ -104,12 +104,12 @@ function renderNarrative(narrative, turn, characterActions = null, time = null) 
 
   if (turn > 0) {
     turnMarker.innerHTML = `<span>Turn ${turn}${timeStr}</span>`;
-    const regenBtn = document.createElement('button');
-    regenBtn.className = 'regenerate-turn-btn';
-    regenBtn.textContent = '↺';
-    regenBtn.title = 'Regenerate from this turn (removes all turns after)';
-    regenBtn.addEventListener('click', () => regenerateTurn(turn));
-    turnMarker.appendChild(regenBtn);
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-turn-btn';
+    deleteBtn.textContent = '✕';
+    deleteBtn.title = 'Delete from this point';
+    deleteBtn.addEventListener('click', () => deleteFromTurn(turn));
+    turnMarker.appendChild(deleteBtn);
   } else {
     turnMarker.innerHTML = `<span>Opening${timeStr}</span>`;
   }
@@ -299,17 +299,17 @@ async function regenerateImage(turn, container, promptOrder = 'characters-first'
   }
 }
 
-async function regenerateTurn(turn) {
-  if (!confirm(`Regenerate turn ${turn}? This will remove all turns from ${turn} onwards and create a new turn ${turn}.`)) {
+async function deleteFromTurn(turn) {
+  if (!confirm(`Delete from turn ${turn}? This will remove turn ${turn} and all turns after it.`)) {
     return;
   }
 
   showLoading();
-  loading.querySelector('p').textContent = `Regenerating turn ${turn}...`;
+  loading.querySelector('p').textContent = `Deleting from turn ${turn}...`;
 
   try {
-    console.log(`[Frontend] Calling regenerate-turn API for turn ${turn}...`);
-    const response = await fetch('/api/game/regenerate-turn', {
+    console.log(`[Frontend] Calling delete-from-turn API for turn ${turn}...`);
+    const response = await fetch('/api/game/delete-from-turn', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ turn })
@@ -319,10 +319,10 @@ async function regenerateTurn(turn) {
     console.log(`[Frontend] API response:`, data);
 
     if (!response.ok) {
-      throw new Error(data.error || 'Failed to regenerate turn');
+      throw new Error(data.error || 'Failed to delete turns');
     }
 
-    // Remove all narrative entries from the regenerated turn onwards
+    // Remove all narrative entries from the deleted turn onwards
     const entries = storyContent.querySelectorAll('.narrative-entry');
     console.log(`[Frontend] Removing ${Array.from(entries).filter(e => parseInt(e.dataset.turn) >= turn).length} entries from turn ${turn} onwards`);
     entries.forEach(entry => {
@@ -332,22 +332,16 @@ async function regenerateTurn(turn) {
       }
     });
 
-    // Render the new turn
-    console.log(`[Frontend] Rendering new turn ${data.turn} with narrative: ${data.narrative?.substring(0, 50)}...`);
+    // Update UI state
     currentTurn = data.turn;
     turnCounter.textContent = `Turn: ${currentTurn}`;
     timeDisplay.textContent = formatTime(data.worldState.time);
-
-    renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time);
     renderWorldState(data.worldState);
 
-    for (const log of data.turnLogs) {
-      renderLogEntry(log);
-    }
-    console.log(`[Frontend] Turn ${data.turn} rendered successfully`);
+    console.log(`[Frontend] Deleted. Now at turn ${data.turn}`);
   } catch (error) {
-    alert('Error regenerating turn: ' + error.message);
-    console.error('[Frontend] Error regenerating turn:', error);
+    alert('Error deleting turns: ' + error.message);
+    console.error('[Frontend] Error deleting turns:', error);
   } finally {
     loading.querySelector('p').textContent = 'Processing...';
     hideLoading();
@@ -820,12 +814,12 @@ async function loadStory(storyId) {
           turnMarker.className = 'turn-marker';
           if (turn > 0) {
             turnMarker.innerHTML = `<span>Turn ${turn}${timeStr ? ` - ${timeStr}` : ''}</span>`;
-            const regenBtn = document.createElement('button');
-            regenBtn.className = 'regenerate-turn-btn';
-            regenBtn.textContent = '↺';
-            regenBtn.title = 'Regenerate from this turn (removes all turns after)';
-            regenBtn.addEventListener('click', () => regenerateTurn(turn));
-            turnMarker.appendChild(regenBtn);
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-turn-btn';
+            deleteBtn.textContent = '✕';
+            deleteBtn.title = 'Delete from this point';
+            deleteBtn.addEventListener('click', () => deleteFromTurn(turn));
+            turnMarker.appendChild(deleteBtn);
           } else {
             turnMarker.innerHTML = `<span>Opening${timeStr ? ` - ${timeStr}` : ''}</span>`;
           }

@@ -562,15 +562,14 @@ If no updates needed, respond with: {"characterUpdates": []}`;
     // Update player agents with restored character state
     this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
 
-    // Save state before regenerating
+    // Save state after deletion
     this.saveStory();
-    console.log(`State restored, now at turn ${this.worldState.turnNumber}. Advancing to regenerate turn ${turn}...`);
+    console.log(`Deleted turns from ${turn} onwards. Now at turn ${this.worldState.turnNumber}.`);
 
-    // Now advance the turn to regenerate
-    const result = await this.advanceTurn();
-    console.log(`Turn ${result.turn} regenerated successfully`);
-
-    return result;
+    return {
+      turn: this.worldState.turnNumber,
+      worldState: this.worldState.getStateSnapshot()
+    };
   }
 
   async generateSceneDescription(turn, narrative) {

@@ -122,7 +122,7 @@ app.post('/api/game/turn', async (req, res) => {
   }
 });
 
-app.post('/api/game/regenerate-turn', async (req, res) => {
+app.post('/api/game/delete-from-turn', async (req, res) => {
   try {
     if (!gameEngine) {
       return res.status(400).json({ error: 'No game in progress' });
@@ -133,20 +133,17 @@ app.post('/api/game/regenerate-turn', async (req, res) => {
       return res.status(400).json({ error: 'Turn number is required' });
     }
 
-    console.log(`[API] Regenerating turn ${turn}...`);
+    console.log(`[API] Deleting from turn ${turn}...`);
     const result = await gameEngine.regenerateTurn(turn);
-    console.log(`[API] Turn ${turn} regenerated, returning response with narrative: ${result.narrative?.substring(0, 50)}...`);
+    console.log(`[API] Deleted. Now at turn ${result.turn}`);
 
     res.json({
       success: true,
       turn: result.turn,
-      characterActions: result.characterActions,
-      narrative: result.narrative,
-      worldState: result.worldState,
-      turnLogs: result.turnLogs
+      worldState: result.worldState
     });
   } catch (error) {
-    console.error('Error regenerating turn:', error);
+    console.error('Error deleting turns:', error);
     res.status(500).json({ error: error.message });
   }
 });

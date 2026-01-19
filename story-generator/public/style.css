@@ -423,7 +423,7 @@ h2 {
   gap: 0.5rem;
 }
 
-.regenerate-turn-btn {
+.delete-turn-btn {
   width: 20px;
   height: 20px;
   padding: 0;
@@ -437,11 +437,11 @@ h2 {
   transition: opacity 0.2s, color 0.2s, background 0.2s;
 }
 
-.turn-marker:hover .regenerate-turn-btn {
+.turn-marker:hover .delete-turn-btn {
   opacity: 1;
 }
 
-.regenerate-turn-btn:hover {
+.delete-turn-btn:hover {
   background: #e94560;
   color: white;
 }
