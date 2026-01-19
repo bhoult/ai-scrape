@@ -1,4 +1,4 @@
-import { FIREWORKS_API_URL, FIREWORKS_MODEL, getApiKey, LLM_CONFIG } from './config.js';
+import { FIREWORKS_API_URL, FIREWORKS_MODEL, AVAILABLE_MODELS, getApiKey, LLM_CONFIG } from './config.js';
 
 const MAX_RETRIES = 5;
 
@@ -6,8 +6,15 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+export function getModelId(modelKey) {
+  if (modelKey && AVAILABLE_MODELS[modelKey]) {
+    return AVAILABLE_MODELS[modelKey].id;
+  }
+  return FIREWORKS_MODEL;
+}
+
 export async function queryLLM(prompt, options = {}) {
-  const { systemPrompt = null, jsonMode = false } = options;
+  const { systemPrompt = null, jsonMode = false, model = null } = options;
 
   const apiKey = getApiKey();
   const messages = [];
@@ -17,8 +24,10 @@ export async function queryLLM(prompt, options = {}) {
   }
   messages.push({ role: 'user', content: prompt });
 
+  const modelId = getModelId(model);
+
   const body = {
-    model: FIREWORKS_MODEL,
+    model: modelId,
     messages,
     ...LLM_CONFIG
   };
@@ -44,15 +53,18 @@ export async function queryLLM(prompt, options = {}) {
 
     const elapsed = Date.now() - startTime;
 
-    if (response.status === 429) {
+    // Retry on rate limit (429) or server errors (502, 503, 504)
+    const retryableStatuses = [429, 502, 503, 504];
+    if (retryableStatuses.includes(response.status)) {
       retries++;
       if (retries <= MAX_RETRIES) {
         const waitTime = Math.pow(2, retries) * 1000;
-        console.log(`Rate limited (429), retrying in ${waitTime/1000}s (attempt ${retries}/${MAX_RETRIES})...`);
+        console.log(`API error (${response.status}), retrying in ${waitTime/1000}s (attempt ${retries}/${MAX_RETRIES})...`);
         await sleep(waitTime);
         continue;
       } else {
-        throw new Error(`Fireworks API rate limit exceeded after ${MAX_RETRIES} retries`);
+        const text = await response.text();
+        throw new Error(`Fireworks API error after ${MAX_RETRIES} retries: ${response.status} ${response.statusText} - ${text}`);
       }
     }
 

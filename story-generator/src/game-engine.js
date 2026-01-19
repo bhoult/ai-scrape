@@ -1,10 +1,11 @@
-import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { WorldState } from './world-state.js';
 import { DMAgent } from './agents/dm-agent.js';
 import { PlayerAgent } from './agents/player-agent.js';
+import { queryLLMJSON } from './fireworks.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORIES_DIR = join(__dirname, '../stories');
@@ -32,7 +33,7 @@ export function listStories() {
 }
 
 export class GameEngine {
-  constructor() {
+  constructor(model = null) {
     this.worldState = null;
     this.dmAgent = null;
     this.playerAgents = [];
@@ -43,6 +44,18 @@ export class GameEngine {
     this.storyContent = [];
     this.createdAt = null;
     this.sceneDescriptions = []; // Array of { turn, description, imagePath }
+    this.model = model; // LLM model to use
+    this.turnSnapshots = []; // Array of world state snapshots at each turn for rollback
+  }
+
+  setModel(model) {
+    this.model = model;
+    if (this.dmAgent) {
+      this.dmAgent.setModel(model);
+    }
+    for (const agent of this.playerAgents) {
+      agent.setModel(model);
+    }
   }
 
   generateStoryId(seed) {
@@ -64,7 +77,81 @@ export class GameEngine {
     return join(this.getStoryDir(), 'images');
   }
 
-  async generateImage(turn, sceneDescription) {
+  buildCharacterDescriptions() {
+    const characters = this.worldState?.characters || [];
+    return characters.map(c => {
+      const appearance = c.appearance || {};
+      const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
+      const parts = [
+        c.name,
+        appearance.gender,
+        appearance.age,
+        appearance.skinTone ? `${appearance.skinTone} skin` : null,
+        appearance.height,
+        appearance.build,
+        hairDesc ? `${hairDesc} hair` : null,
+        appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
+        appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+        appearance.face,
+        appearance.distinguishing,
+        c.clothing ? `wearing ${c.clothing}` : null
+      ].filter(Boolean).join(', ');
+      return parts;
+    });
+  }
+
+  buildEnvironmentDescription() {
+    const environment = this.worldState?.environment || {};
+    return [
+      environment.type,
+      environment.terrain,
+      environment.lighting,
+      environment.weather,
+      environment.temperature
+    ].filter(Boolean).join(', ');
+  }
+
+  buildImagePrompt(sceneDescription, promptOrder = 'characters-first') {
+    // Build prompt with configurable order
+    // 'characters-first': characters, scene, environment (default)
+    // 'scene-first': scene, characters, environment
+    // 'environment-only': only environment description (no characters or scene)
+    const parts = [];
+
+    const characterDescs = this.buildCharacterDescriptions();
+    const charDesc = characterDescs.length > 0 ? characterDescs.join('. ') : null;
+    const envDesc = this.buildEnvironmentDescription();
+
+    if (promptOrder === 'environment-only') {
+      // Only environment, no characters or scene
+      if (envDesc) parts.push(envDesc);
+    } else if (promptOrder === 'scene-first') {
+      if (sceneDescription) parts.push(sceneDescription);
+      if (charDesc) parts.push(charDesc);
+      if (envDesc) parts.push(envDesc);
+    } else {
+      // Characters first (default)
+      if (charDesc) parts.push(charDesc);
+      if (sceneDescription) parts.push(sceneDescription);
+      if (envDesc) parts.push(envDesc);
+    }
+
+    return parts.join('. ');
+  }
+
+  buildImageMetadata(turn, sceneDescription, narrative, prompt, promptOrder) {
+    return {
+      turn,
+      sceneDescription,
+      narrative,
+      characters: this.buildCharacterDescriptions(),
+      environment: this.buildEnvironmentDescription(),
+      prompt,
+      promptOrder: promptOrder || 'characters-first'
+    };
+  }
+
+  async generateImage(turn, sceneDescription, narrative = null, maxRetries = 3, promptOrder = 'characters-first') {
     if (!sceneDescription || !this.storyId) return null;
 
     const imagesDir = this.getImagesDir();
@@ -73,13 +160,52 @@ export class GameEngine {
     const imageName = `turn-${turn.toString().padStart(3, '0')}.jpg`;
     const imagePath = join(imagesDir, imageName);
 
+    // Build full prompt with configurable order
+    const imagePrompt = this.buildImagePrompt(sceneDescription, promptOrder);
+
+    // Build metadata to embed in image (includes prompt and order)
+    const metadata = this.buildImageMetadata(turn, sceneDescription, narrative, imagePrompt, promptOrder);
+    const metadataJson = JSON.stringify(metadata);
+
+    // Always save the scene description record so we can regenerate later if needed
+    const record = { turn, description: sceneDescription, narrative, imagePath: imageName, success: false };
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await this.runImageGeneration(imagePrompt, imagePath, metadataJson);
+        if (result) {
+          record.success = true;
+          this.sceneDescriptions.push(record);
+          return record;
+        }
+        console.log(`Image generation attempt ${attempt}/${maxRetries} failed for turn ${turn}`);
+      } catch (err) {
+        console.error(`Image generation attempt ${attempt}/${maxRetries} error:`, err.message);
+      }
+
+      if (attempt < maxRetries) {
+        // Wait before retry (exponential backoff: 2s, 4s, 8s)
+        const waitTime = Math.pow(2, attempt) * 1000;
+        console.log(`Waiting ${waitTime/1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+
+    // Save the record even if generation failed, so we can regenerate later
+    console.error(`Image generation failed for turn ${turn} after ${maxRetries} attempts`);
+    this.sceneDescriptions.push(record);
+    return record;
+  }
+
+  runImageGeneration(imagePrompt, imagePath, metadataJson) {
     return new Promise((resolve, reject) => {
       const args = [
-        sceneDescription,
+        imagePrompt,
         '--output', imagePath,
         '--width', '512',
         '--height', '512',
-        '--steps', '8'
+        '--steps', '8',
+        '--metadata', metadataJson
       ];
 
       const proc = spawn(DRAW_SCRIPT, args);
@@ -91,18 +217,15 @@ export class GameEngine {
 
       proc.on('close', (code) => {
         if (code === 0) {
-          const record = { turn, description: sceneDescription, imagePath: imageName };
-          this.sceneDescriptions.push(record);
-          resolve(record);
+          resolve(true);
         } else {
-          console.error(`Image generation failed for turn ${turn}:`, stderr);
-          resolve(null); // Don't fail the turn if image generation fails
+          console.error(`Image generation failed:`, stderr);
+          resolve(false);
         }
       });
 
       proc.on('error', (err) => {
-        console.error(`Failed to spawn draw.py:`, err);
-        resolve(null);
+        reject(err);
       });
     });
   }
@@ -132,9 +255,11 @@ export class GameEngine {
       storyId: this.storyId,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
+      model: this.model,
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
-      sceneDescriptions: this.sceneDescriptions
+      sceneDescriptions: this.sceneDescriptions,
+      turnSnapshots: this.turnSnapshots
     };
     writeFileSync(jsonPath, JSON.stringify(stateData, null, 2));
   }
@@ -142,8 +267,12 @@ export class GameEngine {
   buildMarkdownWithImages() {
     const lines = [];
 
-    for (let i = 0; i < this.storyContent.length; i++) {
-      const content = this.storyContent[i];
+    // Filter out any undefined/null entries
+    const validContent = this.storyContent.filter(c => c !== undefined && c !== null);
+
+    for (let i = 0; i < validContent.length; i++) {
+      const content = validContent[i];
+
       lines.push(content);
 
       // Check if this is a turn header
@@ -153,8 +282,8 @@ export class GameEngine {
         const scene = this.sceneDescriptions.find(s => s.turn === turn);
         if (scene) {
           // Add narrative first (next content item), then image
-          if (i + 1 < this.storyContent.length) {
-            lines.push(this.storyContent[i + 1]);
+          if (i + 1 < validContent.length) {
+            lines.push(validContent[i + 1]);
             i++; // Skip the narrative in the next iteration
           }
           lines.push(`\n![${scene.description}](images/${scene.imagePath})`);
@@ -179,6 +308,12 @@ export class GameEngine {
     this.createdAt = data.createdAt;
     this.storyContent = data.storyContent || [];
     this.sceneDescriptions = Array.isArray(data.sceneDescriptions) ? data.sceneDescriptions : [];
+    this.turnSnapshots = Array.isArray(data.turnSnapshots) ? data.turnSnapshots : [];
+
+    // Restore model from saved state (constructor model is ignored, use saved model)
+    if (data.model) {
+      this.model = data.model;
+    }
 
     // Restore world state with defensive initialization
     this.worldState = new WorldState();
@@ -220,9 +355,9 @@ export class GameEngine {
       status: c.status || 'unknown'
     }));
 
-    // Recreate agents
-    this.dmAgent = new DMAgent();
-    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char));
+    // Recreate agents with model
+    this.dmAgent = new DMAgent(this.model);
+    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
     this.llmLog = [];
     this.initialized = true;
 
@@ -235,7 +370,8 @@ export class GameEngine {
       seed: this.seed,
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
-      storyId: this.storyId
+      storyId: this.storyId,
+      model: this.model
     };
   }
 
@@ -247,14 +383,260 @@ export class GameEngine {
       const imagePath = join(imagesDir, scene.imagePath);
       if (!existsSync(imagePath)) {
         console.log(`Generating missing image for turn ${scene.turn}...`);
-        await this.generateImage(scene.turn, scene.description);
+        await this.generateImage(scene.turn, scene.description, scene.narrative);
       }
     }
   }
 
+  async readImageMetadata(turn) {
+    const scene = this.sceneDescriptions.find(s => s.turn === turn);
+    if (!scene) {
+      throw new Error(`No scene description found for turn ${turn}`);
+    }
+
+    const imagesDir = this.getImagesDir();
+    const imagePath = join(imagesDir, scene.imagePath);
+
+    if (!existsSync(imagePath)) {
+      throw new Error(`Image not found for turn ${turn}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn(DRAW_SCRIPT, ['--read-metadata', imagePath]);
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0 && stdout.trim()) {
+          try {
+            const metadata = JSON.parse(stdout.trim());
+            resolve(metadata);
+          } catch (e) {
+            reject(new Error(`Failed to parse metadata: ${e.message}`));
+          }
+        } else {
+          reject(new Error(stderr || 'No metadata found in image'));
+        }
+      });
+
+      proc.on('error', (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  async regenerateTurn(turn) {
+    if (!this.initialized) {
+      throw new Error('Game not initialized');
+    }
+
+    if (turn < 1) {
+      throw new Error('Cannot regenerate opening. Start a new story instead.');
+    }
+
+    if (turn > this.worldState.turnNumber) {
+      throw new Error(`Turn ${turn} does not exist yet`);
+    }
+
+    console.log(`Regenerating from turn ${turn}, removing turns ${turn} to ${this.worldState.turnNumber}...`);
+
+    // Remove images for turns being deleted
+    const imagesDir = this.getImagesDir();
+    for (let t = turn; t <= this.worldState.turnNumber; t++) {
+      const imageName = `turn-${t.toString().padStart(3, '0')}.jpg`;
+      const imagePath = join(imagesDir, imageName);
+      if (existsSync(imagePath)) {
+        unlinkSync(imagePath);
+        console.log(`Deleted image for turn ${t}`);
+      }
+    }
+
+    // Remove scene descriptions for deleted turns
+    this.sceneDescriptions = this.sceneDescriptions.filter(s => s.turn < turn);
+
+    // Remove turn snapshots for deleted turns
+    this.turnSnapshots = this.turnSnapshots.filter(s => s.turn < turn);
+
+    // Find snapshot for turn before the one we're regenerating (turn - 1)
+    const previousTurn = turn - 1;
+    const snapshot = this.turnSnapshots.find(s => s.turn === previousTurn);
+
+    if (!snapshot) {
+      throw new Error(`No snapshot found for turn ${previousTurn}. This story was created before snapshot support - please start a new story.`);
+    }
+
+    console.log(`Restoring state from turn ${previousTurn} snapshot...`);
+
+    // Restore world state from snapshot
+    const ws = snapshot.worldState;
+    this.worldState.turnNumber = ws.turnNumber;
+    this.worldState.summary = ws.summary || '';
+    this.worldState.time = ws.time || { day: 1, hour: 8, minute: 0 };
+    this.worldState.environment = ws.environment || {};
+    this.worldState.storyGoal = ws.storyGoal || '';
+    this.worldState.narrativeArc = ws.narrativeArc || '';
+    this.worldState.majorEvents = Array.isArray(ws.majorEvents) ? [...ws.majorEvents] : [];
+    this.worldState.tensions = Array.isArray(ws.tensions) ? [...ws.tensions] : [];
+    this.worldState.history = Array.isArray(ws.history) ? [...ws.history] : [];
+
+    // Restore current location
+    const loc = ws.currentLocation || {};
+    this.worldState.currentLocation = {
+      id: loc.id || 'unknown',
+      name: loc.name || 'Unknown Location',
+      description: loc.description || '',
+      exits: Array.isArray(loc.exits) ? [...loc.exits] : [],
+      items: Array.isArray(loc.items) ? [...loc.items] : [],
+      npcs: Array.isArray(loc.npcs) ? [...loc.npcs] : []
+    };
+
+    // Restore characters with full state
+    this.worldState.characters = (ws.characters || []).map(c => ({
+      id: c.id || 'unknown',
+      name: c.name || 'Unknown',
+      appearance: c.appearance ? { ...c.appearance } : {},
+      clothing: c.clothing || '',
+      personality: c.personality || '',
+      goals: c.goals || '',
+      inventory: Array.isArray(c.inventory) ? [...c.inventory] : [],
+      status: c.status || 'unknown'
+    }));
+
+    // Restore story content from snapshot
+    this.storyContent = snapshot.storyContent ? [...snapshot.storyContent] : [];
+
+    // Update player agents with restored character state
+    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
+
+    // Save state before regenerating
+    this.saveStory();
+    console.log(`State restored, now at turn ${this.worldState.turnNumber}. Advancing to regenerate turn ${turn}...`);
+
+    // Now advance the turn to regenerate
+    const result = await this.advanceTurn();
+    console.log(`Turn ${result.turn} regenerated successfully`);
+
+    return result;
+  }
+
+  async generateSceneDescription(turn, narrative) {
+    // Generate a new scene description using the DM agent
+    const prompt = `Based on this narrative from the story, write a vivid visual description for illustration (1 sentence capturing the key moment - characters, action, setting, lighting, mood - suitable for image generation).
+
+Narrative: "${narrative}"
+
+Characters in the scene:
+${this.buildCharacterDescriptions().join('\n')}
+
+Environment: ${this.buildEnvironmentDescription()}
+
+Respond with ONLY a JSON object:
+{"sceneDescription": "your description here"}`;
+
+    const result = await this.dmAgent.generateSceneDescription ?
+      this.dmAgent.generateSceneDescription(narrative, this.worldState.getStateSnapshot()) :
+      await queryLLMJSON(prompt, { model: this.model });
+
+    return result.parsed?.sceneDescription || result.sceneDescription || null;
+  }
+
+  async regenerateImage(turn, maxRetries = 3, promptOrder = 'characters-first') {
+    // Find the scene description for this turn
+    let scene = this.sceneDescriptions.find(s => s.turn === turn);
+
+    const imagesDir = this.getImagesDir();
+    const imageName = `turn-${turn.toString().padStart(3, '0')}.jpg`;
+    const imagePath = join(imagesDir, imageName);
+
+    // If no scene description exists, try to generate one from the narrative
+    if (!scene) {
+      console.log(`No scene description found for turn ${turn}, generating new one...`);
+
+      // Find the narrative for this turn from history or storyContent
+      let narrative = null;
+
+      // Try history first (history[0] = opening, history[N] = turn N)
+      if (turn < this.worldState.history.length) {
+        narrative = this.worldState.history[turn];
+      }
+
+      // Fallback to storyContent if not in history
+      // storyContent structure: [title, "## Opening", narrative0, "## Turn 1", narrative1, ...]
+      // For turn N: narrative is at index 2 + 2*N
+      if (!narrative && this.storyContent) {
+        const narrativeIndex = 2 + 2 * turn;
+        if (narrativeIndex < this.storyContent.length) {
+          narrative = this.storyContent[narrativeIndex];
+        }
+      }
+
+      if (!narrative) {
+        throw new Error(`Cannot find narrative for turn ${turn} to generate scene description (history length: ${this.worldState.history.length}, storyContent length: ${this.storyContent?.length || 0})`);
+      }
+
+      const sceneDescription = await this.generateSceneDescription(turn, narrative);
+      if (!sceneDescription) {
+        throw new Error(`Failed to generate scene description for turn ${turn}`);
+      }
+
+      // Generate fresh image with new scene description
+      const result = await this.generateImage(turn, sceneDescription, narrative, maxRetries, promptOrder);
+      this.saveStory();
+      return { success: result?.success || false };
+    }
+
+    // Always generate fresh with new prompt order (don't use --regenerate which uses embedded prompt)
+    console.log(`Generating image for turn ${turn} with ${promptOrder} ordering...`);
+
+    // Remove existing scene description entry so generateImage can add the new one
+    this.sceneDescriptions = this.sceneDescriptions.filter(s => s.turn !== turn);
+
+    const result = await this.generateImage(turn, scene.description, scene.narrative, maxRetries, promptOrder);
+    this.saveStory();
+    return { success: result?.success || false };
+  }
+
+  runImageRegeneration(imagePath) {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '--regenerate', imagePath,
+        '--output', imagePath  // Overwrite the existing image
+      ];
+
+      const proc = spawn(DRAW_SCRIPT, args);
+
+      let stderr = '';
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(true);
+        } else {
+          console.error(`Image regeneration failed:`, stderr);
+          resolve(false);
+        }
+      });
+
+      proc.on('error', (err) => {
+        reject(err);
+      });
+    });
+  }
+
   async initializeFromSeed(seed) {
     this.worldState = new WorldState();
-    this.dmAgent = new DMAgent();
+    this.dmAgent = new DMAgent(this.model);
     this.playerAgents = [];
     this.llmLog = [];
     this.seed = seed;
@@ -268,7 +650,7 @@ export class GameEngine {
     this.worldState.initialize(data);
 
     for (const character of data.characters) {
-      this.playerAgents.push(new PlayerAgent(character));
+      this.playerAgents.push(new PlayerAgent(character, this.model));
     }
 
     this.initialized = true;
@@ -281,8 +663,15 @@ export class GameEngine {
 
     // Generate image for opening scene
     if (data.sceneDescription) {
-      await this.generateImage(0, data.sceneDescription);
+      await this.generateImage(0, data.sceneDescription, data.narrative);
     }
+
+    // Save snapshot for turn 0 (opening) to enable rollback
+    this.turnSnapshots = [{
+      turn: 0,
+      worldState: this.worldState.getStateSnapshot(),
+      storyContent: [...this.storyContent]
+    }];
 
     this.saveStory();
 
@@ -299,7 +688,22 @@ export class GameEngine {
       throw new Error('Game not initialized. Call initializeFromSeed first.');
     }
 
+    // Log DM instructions if provided
+    if (dmInstructions) {
+      console.log(`[Turn ${this.worldState.turnNumber + 1}] DM Instructions: ${dmInstructions}`);
+    }
+
     const turnLogs = [];
+
+    // Add DM instructions to the log if provided
+    if (dmInstructions) {
+      turnLogs.push({
+        type: 'dm-instructions',
+        turn: this.worldState.turnNumber + 1,
+        instructions: dmInstructions,
+        timestamp: new Date().toISOString()
+      });
+    }
     const recentHistory = this.worldState.getRecentHistory(3);
     const stateSnapshot = this.worldState.getStateSnapshot();
 
@@ -326,6 +730,11 @@ export class GameEngine {
     this.worldState.applyChanges(resolution.worldChanges);
     this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
 
+    // Record DM instructions as a major event
+    if (dmInstructions) {
+      this.worldState.majorEvents.push(`[DM Turn ${this.worldState.turnNumber}] ${dmInstructions}`);
+    }
+
     this.llmLog.push(...turnLogs);
 
     // Append turn to story
@@ -335,8 +744,15 @@ export class GameEngine {
 
     // Generate image for this turn
     if (resolution.sceneDescription) {
-      await this.generateImage(this.worldState.turnNumber, resolution.sceneDescription);
+      await this.generateImage(this.worldState.turnNumber, resolution.sceneDescription, resolution.narrative);
     }
+
+    // Save snapshot for this turn to enable rollback
+    this.turnSnapshots.push({
+      turn: this.worldState.turnNumber,
+      worldState: this.worldState.getStateSnapshot(),
+      storyContent: [...this.storyContent]
+    });
 
     this.saveStory();
 

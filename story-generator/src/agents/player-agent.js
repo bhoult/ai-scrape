@@ -2,15 +2,21 @@ import { queryLLMJSON } from '../fireworks.js';
 import { PLAYER_SYSTEM_PROMPT, playerActionPrompt } from '../prompts.js';
 
 export class PlayerAgent {
-  constructor(character) {
+  constructor(character, model = null) {
     this.character = character;
+    this.model = model;
+  }
+
+  setModel(model) {
+    this.model = model;
   }
 
   async decideAction(worldState, recentHistory) {
     const prompt = playerActionPrompt(this.character, worldState, recentHistory);
 
     const result = await queryLLMJSON(prompt, {
-      systemPrompt: PLAYER_SYSTEM_PROMPT
+      systemPrompt: PLAYER_SYSTEM_PROMPT,
+      model: this.model
     });
 
     return {

@@ -19,9 +19,64 @@ const storyViewer = document.getElementById('story-viewer');
 const storyViewerTitle = document.getElementById('story-viewer-title');
 const storyViewerBody = document.getElementById('story-viewer-body');
 const viewerCloseBtn = document.getElementById('viewer-close-btn');
+const modelSelect = document.getElementById('model-select');
 
 let currentTurn = 0;
 let currentStoryId = null;
+let availableModels = {};
+let defaultModel = null;
+
+// Load available models on startup
+async function loadModels() {
+  try {
+    const response = await fetch('/api/models');
+    const data = await response.json();
+    availableModels = data.models;
+    defaultModel = data.default;
+
+    modelSelect.innerHTML = '';
+    for (const [key, model] of Object.entries(availableModels)) {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = model.name;
+      option.title = model.description;
+      if (key === defaultModel) {
+        option.selected = true;
+      }
+      modelSelect.appendChild(option);
+    }
+  } catch (error) {
+    console.error('Error loading models:', error);
+    modelSelect.innerHTML = '<option value="">Error loading models</option>';
+  }
+}
+
+// Change model for current game
+async function changeModel(model) {
+  if (!currentStoryId) return;
+
+  try {
+    const response = await fetch('/api/game/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to change model');
+    }
+  } catch (error) {
+    console.error('Error changing model:', error);
+  }
+}
+
+modelSelect.addEventListener('change', () => {
+  changeModel(modelSelect.value);
+});
+
+// Initialize models on page load
+loadModels();
 
 function formatTime(time) {
   if (!time) return '';
@@ -41,13 +96,24 @@ function hideLoading() {
 function renderNarrative(narrative, turn, characterActions = null, time = null) {
   const entry = document.createElement('div');
   entry.className = 'narrative-entry';
+  entry.dataset.turn = turn;
 
   const timeStr = time ? ` - ${formatTime(time)}` : '';
+  const turnMarker = document.createElement('div');
+  turnMarker.className = 'turn-marker';
+
   if (turn > 0) {
-    entry.innerHTML = `<div class="turn-marker">Turn ${turn}${timeStr}</div>`;
+    turnMarker.innerHTML = `<span>Turn ${turn}${timeStr}</span>`;
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'regenerate-turn-btn';
+    regenBtn.textContent = '↺';
+    regenBtn.title = 'Regenerate from this turn (removes all turns after)';
+    regenBtn.addEventListener('click', () => regenerateTurn(turn));
+    turnMarker.appendChild(regenBtn);
   } else {
-    entry.innerHTML = `<div class="turn-marker">Opening${timeStr}</div>`;
+    turnMarker.innerHTML = `<span>Opening${timeStr}</span>`;
   }
+  entry.appendChild(turnMarker);
 
   if (characterActions && characterActions.length > 0) {
     const actionsDiv = document.createElement('div');
@@ -81,7 +147,7 @@ function renderNarrative(narrative, turn, characterActions = null, time = null) 
   storyContent.scrollTop = storyContent.scrollHeight;
 }
 
-function pollForImage(turn, container) {
+function pollForImage(turn, container, preserveScroll = false) {
   const turnStr = turn.toString().padStart(3, '0');
   const imageUrl = `/stories/${currentStoryId}/images/turn-${turnStr}.jpg`;
   let attempts = 0;
@@ -96,7 +162,10 @@ function pollForImage(turn, container) {
       img.dataset.fullSrc = imageUrl;
       img.addEventListener('click', () => showImageOverlay(imageUrl));
       container.appendChild(img);
-      storyContent.scrollTop = storyContent.scrollHeight;
+      addRegenerateButton(turn, container);
+      if (!preserveScroll) {
+        storyContent.scrollTop = storyContent.scrollHeight;
+      }
     };
     img.onerror = () => {
       attempts++;
@@ -104,6 +173,7 @@ function pollForImage(turn, container) {
         setTimeout(checkImage, 2000); // Check every 2 seconds
       } else {
         container.innerHTML = '<div class="image-failed">Image generation failed</div>';
+        addRegenerateButton(turn, container);
       }
     };
     img.src = imageUrl + '?t=' + Date.now(); // Cache bust
@@ -124,12 +194,251 @@ function checkForExistingImage(turn, container) {
     img.dataset.fullSrc = imageUrl;
     img.addEventListener('click', () => showImageOverlay(imageUrl));
     container.appendChild(img);
+    addRegenerateButton(turn, container);
   };
   img.onerror = () => {
-    // No image exists, remove the empty container
-    container.remove();
+    // No image exists, show placeholder with regenerate buttons
+    container.innerHTML = '<div class="image-missing">No image</div>';
+    addRegenerateButton(turn, container);
   };
   img.src = imageUrl;
+}
+
+function addRegenerateButton(turn, container) {
+  const btnContainer = document.createElement('div');
+  btnContainer.className = 'image-buttons';
+
+  // Characters first button
+  const charFirstBtn = document.createElement('button');
+  charFirstBtn.className = 'regenerate-btn';
+  charFirstBtn.textContent = '↻C';
+  charFirstBtn.title = 'Regenerate with characters first in prompt';
+  charFirstBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    regenerateImage(turn, container, 'characters-first');
+  });
+  btnContainer.appendChild(charFirstBtn);
+
+  // Scene first button
+  const sceneFirstBtn = document.createElement('button');
+  sceneFirstBtn.className = 'regenerate-btn';
+  sceneFirstBtn.textContent = '↻S';
+  sceneFirstBtn.title = 'Regenerate with scene first in prompt';
+  sceneFirstBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    regenerateImage(turn, container, 'scene-first');
+  });
+  btnContainer.appendChild(sceneFirstBtn);
+
+  // Environment only button
+  const envOnlyBtn = document.createElement('button');
+  envOnlyBtn.className = 'regenerate-btn';
+  envOnlyBtn.textContent = '↻E';
+  envOnlyBtn.title = 'Regenerate with environment only (no characters or scene)';
+  envOnlyBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    regenerateImage(turn, container, 'environment-only');
+  });
+  btnContainer.appendChild(envOnlyBtn);
+
+  const metadataBtn = document.createElement('button');
+  metadataBtn.className = 'metadata-btn';
+  metadataBtn.textContent = 'ℹ';
+  metadataBtn.title = 'View image metadata';
+  metadataBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showImageMetadata(turn);
+  });
+  btnContainer.appendChild(metadataBtn);
+
+  container.appendChild(btnContainer);
+}
+
+async function regenerateImage(turn, container, promptOrder = 'characters-first') {
+  const btns = container.querySelectorAll('.regenerate-btn');
+  btns.forEach(btn => {
+    btn.disabled = true;
+    btn.textContent = '...';
+  });
+
+  try {
+    const response = await fetch('/api/game/regenerate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turn, promptOrder })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to regenerate image');
+    }
+
+    if (data.imageGenerated) {
+      // Image was generated, show it
+      container.innerHTML = '';
+      const turnStr = turn.toString().padStart(3, '0');
+      const imageUrl = `/stories/${currentStoryId}/images/turn-${turnStr}.jpg?t=${Date.now()}`;
+      const img = document.createElement('img');
+      img.className = 'story-image';
+      img.alt = `Turn ${turn} illustration`;
+      img.dataset.fullSrc = imageUrl;
+      img.addEventListener('click', () => showImageOverlay(imageUrl));
+      img.src = imageUrl;
+      container.appendChild(img);
+      addRegenerateButton(turn, container);
+    } else {
+      // Image generation failed
+      container.innerHTML = '<div class="image-failed">Generation failed</div>';
+      addRegenerateButton(turn, container);
+    }
+  } catch (error) {
+    alert('Error regenerating image: ' + error.message);
+    container.innerHTML = '<div class="image-missing">No image</div>';
+    addRegenerateButton(turn, container);
+  }
+}
+
+async function regenerateTurn(turn) {
+  if (!confirm(`Regenerate turn ${turn}? This will remove all turns from ${turn} onwards and create a new turn ${turn}.`)) {
+    return;
+  }
+
+  showLoading();
+  loading.querySelector('p').textContent = `Regenerating turn ${turn}...`;
+
+  try {
+    console.log(`[Frontend] Calling regenerate-turn API for turn ${turn}...`);
+    const response = await fetch('/api/game/regenerate-turn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turn })
+    });
+
+    const data = await response.json();
+    console.log(`[Frontend] API response:`, data);
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to regenerate turn');
+    }
+
+    // Remove all narrative entries from the regenerated turn onwards
+    const entries = storyContent.querySelectorAll('.narrative-entry');
+    console.log(`[Frontend] Removing ${Array.from(entries).filter(e => parseInt(e.dataset.turn) >= turn).length} entries from turn ${turn} onwards`);
+    entries.forEach(entry => {
+      const entryTurn = parseInt(entry.dataset.turn);
+      if (entryTurn >= turn) {
+        entry.remove();
+      }
+    });
+
+    // Render the new turn
+    console.log(`[Frontend] Rendering new turn ${data.turn} with narrative: ${data.narrative?.substring(0, 50)}...`);
+    currentTurn = data.turn;
+    turnCounter.textContent = `Turn: ${currentTurn}`;
+    timeDisplay.textContent = formatTime(data.worldState.time);
+
+    renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time);
+    renderWorldState(data.worldState);
+
+    for (const log of data.turnLogs) {
+      renderLogEntry(log);
+    }
+    console.log(`[Frontend] Turn ${data.turn} rendered successfully`);
+  } catch (error) {
+    alert('Error regenerating turn: ' + error.message);
+    console.error('[Frontend] Error regenerating turn:', error);
+  } finally {
+    loading.querySelector('p').textContent = 'Processing...';
+    hideLoading();
+  }
+}
+
+async function showImageMetadata(turn) {
+  try {
+    const response = await fetch(`/api/game/image-metadata/${turn}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to read metadata');
+    }
+
+    const metadata = data.metadata;
+    const genParams = metadata.generation_params || {};
+
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'metadata-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'metadata-modal';
+
+    let html = `<h3>Image Metadata - Turn ${metadata.turn || turn}</h3>`;
+
+    // Narrative (story text)
+    if (metadata.narrative) {
+      html += `<div class="metadata-section"><strong>Story Text:</strong><p>${escapeHtml(metadata.narrative)}</p></div>`;
+    }
+
+    // Scene description (visual prompt for image generation)
+    if (metadata.sceneDescription) {
+      html += `<div class="metadata-section"><strong>Scene Description:</strong><p>${escapeHtml(metadata.sceneDescription)}</p></div>`;
+    }
+
+    // Full prompt sent to image generator
+    if (metadata.prompt) {
+      html += `<div class="metadata-section"><strong>Image Prompt:</strong><p>${escapeHtml(metadata.prompt)}</p></div>`;
+    }
+
+    // Prompt order
+    if (metadata.promptOrder) {
+      html += `<div class="metadata-section"><strong>Prompt Order:</strong><p>${escapeHtml(metadata.promptOrder)}</p></div>`;
+    }
+
+    // Generation parameters
+    if (genParams.seed !== undefined) {
+      html += `<div class="metadata-section"><strong>Seed:</strong><p>${genParams.seed}</p></div>`;
+    }
+    if (genParams.width && genParams.height) {
+      html += `<div class="metadata-section"><strong>Size:</strong><p>${genParams.width}x${genParams.height}, ${genParams.steps || 8} steps</p></div>`;
+    }
+
+    // Characters
+    if (metadata.characters && metadata.characters.length > 0) {
+      html += `<div class="metadata-section"><strong>Characters:</strong><ul>`;
+      for (const char of metadata.characters) {
+        html += `<li>${escapeHtml(char)}</li>`;
+      }
+      html += `</ul></div>`;
+    }
+
+    // Environment
+    if (metadata.environment) {
+      html += `<div class="metadata-section"><strong>Environment:</strong><p>${escapeHtml(metadata.environment)}</p></div>`;
+    }
+
+    html += `<div class="metadata-section"><strong>Generated:</strong><p>${metadata.generated_at || metadata.generatedAt || 'Unknown'}</p></div>`;
+    html += `<button class="metadata-close-btn">Close</button>`;
+
+    modal.innerHTML = html;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Close handlers
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    modal.querySelector('.metadata-close-btn').addEventListener('click', () => overlay.remove());
+    const closeOnEscape = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', closeOnEscape);
+      }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+  } catch (error) {
+    alert('Error reading metadata: ' + error.message);
+  }
 }
 
 function showImageOverlay(imageUrl) {
@@ -137,7 +446,10 @@ function showImageOverlay(imageUrl) {
   overlay.className = 'image-overlay';
 
   const img = document.createElement('img');
-  img.src = imageUrl;
+  // Add cache-busting parameter to ensure fresh image after regeneration
+  // Handle URLs that might already have query parameters
+  const separator = imageUrl.includes('?') ? '&' : '?';
+  img.src = imageUrl + separator + 't=' + Date.now();
   img.alt = 'Full size illustration';
 
   overlay.appendChild(img);
@@ -249,6 +561,23 @@ function renderLogEntry(log) {
   const entry = document.createElement('div');
   entry.className = 'log-entry';
 
+  // Handle DM instructions specially
+  if (log.type === 'dm-instructions') {
+    entry.innerHTML = `
+      <div class="log-header dm-instructions-header">
+        <span class="log-type dm-instructions">DM Instructions (Turn ${log.turn})</span>
+      </div>
+      <div class="log-content expanded">
+        <div class="log-section">
+          <pre>${escapeHtml(log.instructions)}</pre>
+        </div>
+      </div>
+    `;
+    llmLog.appendChild(entry);
+    llmLog.scrollTop = llmLog.scrollHeight;
+    return;
+  }
+
   let typeLabel = log.type;
   if (log.type === 'player_action' && log.character) {
     typeLabel = `${log.character}'s Action`;
@@ -298,11 +627,13 @@ async function startGame() {
   llmLog.innerHTML = '';
   currentTurn = 0;
 
+  const model = modelSelect.value || defaultModel;
+
   try {
     const response = await fetch('/api/game', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seed })
+      body: JSON.stringify({ seed, model })
     });
 
     const data = await response.json();
@@ -409,6 +740,7 @@ async function loadStoryList() {
           </div>
           <div class="story-item-actions">
             <button class="story-view-btn" data-id="${story.id}">View</button>
+            <button class="story-text-btn" data-id="${story.id}">Copy Text</button>
             <button class="story-continue-btn" data-id="${story.id}">Continue</button>
           </div>
         </div>
@@ -420,6 +752,12 @@ async function loadStoryList() {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         viewStory(btn.dataset.id);
+      });
+    });
+    storyList.querySelectorAll('.story-text-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        copyStoryText(btn.dataset.id, btn);
       });
     });
     storyList.querySelectorAll('.story-continue-btn').forEach(btn => {
@@ -439,12 +777,13 @@ async function loadStory(storyId) {
   storyMenu.classList.add('hidden');
 
   const generateMissingImages = generateImagesCheckbox.checked;
+  const model = modelSelect.value || defaultModel;
 
   try {
     const response = await fetch(`/api/stories/${storyId}/load`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ generateMissingImages })
+      body: JSON.stringify({ generateMissingImages, model })
     });
 
     const data = await response.json();
@@ -474,7 +813,23 @@ async function loadStory(storyId) {
 
           const entry = document.createElement('div');
           entry.className = 'narrative-entry';
-          entry.innerHTML = `<div class="turn-marker">${turnMatch[1]}${timeStr ? ` - ${timeStr}` : ''}</div>`;
+          entry.dataset.turn = turn;
+
+          // Create turn marker with regenerate button
+          const turnMarker = document.createElement('div');
+          turnMarker.className = 'turn-marker';
+          if (turn > 0) {
+            turnMarker.innerHTML = `<span>Turn ${turn}${timeStr ? ` - ${timeStr}` : ''}</span>`;
+            const regenBtn = document.createElement('button');
+            regenBtn.className = 'regenerate-turn-btn';
+            regenBtn.textContent = '↺';
+            regenBtn.title = 'Regenerate from this turn (removes all turns after)';
+            regenBtn.addEventListener('click', () => regenerateTurn(turn));
+            turnMarker.appendChild(regenBtn);
+          } else {
+            turnMarker.innerHTML = `<span>Opening${timeStr ? ` - ${timeStr}` : ''}</span>`;
+          }
+          entry.appendChild(turnMarker);
 
           // Add image container (before narrative for float wrapping)
           const imageContainer = document.createElement('div');
@@ -498,6 +853,11 @@ async function loadStory(storyId) {
     turnCounter.textContent = `Turn: ${currentTurn}`;
     timeDisplay.textContent = formatTime(data.worldState.time);
     renderWorldState(data.worldState);
+
+    // Restore model selection
+    if (data.model && modelSelect.querySelector(`option[value="${data.model}"]`)) {
+      modelSelect.value = data.model;
+    }
 
     turnBtn.disabled = false;
     dmControls.style.display = 'block';
@@ -525,6 +885,79 @@ menuCloseBtn.addEventListener('click', closeStoryMenu);
 storyMenu.addEventListener('click', (e) => {
   if (e.target === storyMenu) closeStoryMenu();
 });
+
+// Copy story as plain text
+async function copyStoryText(storyId, btn) {
+  const originalText = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+
+  try {
+    const response = await fetch(`/stories/${storyId}/story.md`);
+    if (!response.ok) {
+      throw new Error('Story file not found');
+    }
+    const markdown = await response.text();
+
+    // Convert markdown to plain text for LLM
+    const plainText = markdownToPlainText(markdown);
+
+    // Copy to clipboard
+    await navigator.clipboard.writeText(plainText);
+
+    btn.textContent = 'Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  } catch (error) {
+    alert('Error copying story: ' + error.message);
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+function markdownToPlainText(markdown) {
+  const lines = markdown.split('\n');
+  const textLines = [];
+
+  for (const line of lines) {
+    // Skip empty lines
+    if (!line.trim()) {
+      textLines.push('');
+      continue;
+    }
+
+    // Convert H1 to plain title
+    if (line.startsWith('# ')) {
+      textLines.push(line.substring(2).toUpperCase());
+      textLines.push('');
+      continue;
+    }
+
+    // Convert H2 to section header
+    if (line.startsWith('## ')) {
+      textLines.push('---');
+      textLines.push(line.substring(3));
+      textLines.push('');
+      continue;
+    }
+
+    // Skip image lines
+    if (line.match(/^!\[.*\]\(.*\)$/)) {
+      continue;
+    }
+
+    // Regular text
+    textLines.push(line);
+  }
+
+  // Clean up multiple empty lines
+  let result = textLines.join('\n');
+  result = result.replace(/\n{3,}/g, '\n\n');
+
+  return result.trim();
+}
 
 // Story viewer functions
 async function viewStory(storyId) {

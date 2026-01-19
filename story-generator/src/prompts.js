@@ -226,6 +226,12 @@ Resolve these actions realistically. Consider:
 - Natural consequences of actions
 - How this advances (or complicates) the story goal
 
+CRITICAL - You MUST track character state changes in worldChanges.characterUpdates:
+- If a character changes clothes, removes clothing, or becomes naked, you MUST set clothingChange to their FULL current outfit (e.g., "naked", "shirtless in torn jeans", "wearing only underwear")
+- If a character picks up or drops items, you MUST set inventoryAdd/inventoryRemove
+- If a character's status changes (injured, tired, wet, etc.), you MUST set statusChange
+- Include an entry in characterUpdates for EACH character whose state changed this turn
+
 TIME TRACKING (CRITICAL):
 - Time must ALWAYS advance forward from the current time shown above
 - Estimate realistic duration for the actions taken (typically 10-60 minutes per turn)
@@ -257,11 +263,18 @@ Respond with JSON:
     },
     "characterUpdates": [
       {
-        "id": "character_id",
-        "inventoryAdd": ["items", "gained"],
-        "inventoryRemove": ["items", "lost"],
-        "statusChange": "new status or null",
-        "clothingChange": "new clothing description if changed, or null"
+        "id": "char_sarah",
+        "inventoryAdd": [],
+        "inventoryRemove": [],
+        "statusChange": "wet and cold",
+        "clothingChange": "naked"
+      },
+      {
+        "id": "char_mike",
+        "inventoryAdd": [],
+        "inventoryRemove": ["shirt"],
+        "statusChange": null,
+        "clothingChange": "shirtless, wearing only cargo pants and boots"
       }
     ],
     "environmentUpdate": {

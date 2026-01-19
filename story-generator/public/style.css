@@ -186,6 +186,15 @@ header h1 {
   background: #3d7a5d;
 }
 
+.story-text-btn {
+  background: #4a4a2a;
+  color: white;
+}
+
+.story-text-btn:hover {
+  background: #6a6a4a;
+}
+
 .story-continue-btn {
   background: #0f3460;
   color: white;
@@ -232,6 +241,21 @@ button {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+#model-select {
+  padding: 0.5rem;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #16213e;
+  color: #eee;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#model-select:focus {
+  outline: none;
+  border-color: #e94560;
 }
 
 #start-btn {
@@ -394,6 +418,32 @@ h2 {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.regenerate-turn-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s, background 0.2s;
+}
+
+.turn-marker:hover .regenerate-turn-btn {
+  opacity: 1;
+}
+
+.regenerate-turn-btn:hover {
+  background: #e94560;
+  color: white;
 }
 
 .character-actions {
@@ -426,7 +476,49 @@ h2 {
   float: right;
   margin: 0 0 0.5rem 0.75rem;
   width: 150px;
-  height: 150px;
+  position: relative;
+}
+
+.image-buttons {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.turn-image:hover .image-buttons {
+  opacity: 1;
+}
+
+.regenerate-btn,
+.metadata-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.regenerate-btn:hover {
+  background: #e94560;
+}
+
+.metadata-btn:hover {
+  background: #0f3460;
+}
+
+.regenerate-btn:disabled,
+.metadata-btn:disabled {
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .story-image {
@@ -473,6 +565,20 @@ h2 {
   background: #3d1a1a;
   border-radius: 6px;
   color: #e94560;
+  font-size: 11px;
+  text-align: center;
+}
+
+.image-missing {
+  width: 150px;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a2e;
+  border: 2px dashed #444;
+  border-radius: 6px;
+  color: #888;
   font-size: 11px;
   text-align: center;
 }
@@ -697,6 +803,12 @@ h2 {
 .log-type.dm_init { color: #e94560; }
 .log-type.dm_resolution { color: #ffb74d; }
 .log-type.player_action { color: #4fc3f7; }
+.log-type.dm-instructions { color: #ff6b6b; font-weight: bold; }
+
+.dm-instructions-header {
+  background: #2d1f1f;
+  border-left: 3px solid #ff6b6b;
+}
 
 .log-time {
   font-size: 11px;
@@ -783,4 +895,81 @@ h2 {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #444;
+}
+
+/* Metadata Modal */
+.metadata-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.metadata-modal {
+  background: #16213e;
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.metadata-modal h3 {
+  color: #e94560;
+  margin-bottom: 1rem;
+  font-size: 18px;
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.5rem;
+}
+
+.metadata-section {
+  margin-bottom: 1rem;
+}
+
+.metadata-section strong {
+  color: #ffb74d;
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 14px;
+}
+
+.metadata-section p {
+  color: #ccc;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.metadata-section ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #ccc;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.metadata-section li {
+  margin-bottom: 0.25rem;
+}
+
+.metadata-close-btn {
+  background: #e94560;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-top: 0.5rem;
+}
+
+.metadata-close-btn:hover {
+  background: #ff6b6b;
 }

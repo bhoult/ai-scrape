@@ -2,15 +2,21 @@ import { queryLLMJSON } from '../fireworks.js';
 import { DM_SYSTEM_PROMPT, dmInitPrompt, dmResolutionPrompt } from '../prompts.js';
 
 export class DMAgent {
-  constructor() {
+  constructor(model = null) {
     this.llmLogs = [];
+    this.model = model;
+  }
+
+  setModel(model) {
+    this.model = model;
   }
 
   async initializeWorld(seed) {
     const prompt = dmInitPrompt(seed);
 
     const result = await queryLLMJSON(prompt, {
-      systemPrompt: DM_SYSTEM_PROMPT
+      systemPrompt: DM_SYSTEM_PROMPT,
+      model: this.model
     });
 
     const log = {
@@ -32,7 +38,8 @@ export class DMAgent {
     const prompt = dmResolutionPrompt(worldState, characterActions, dmInstructions);
 
     const result = await queryLLMJSON(prompt, {
-      systemPrompt: DM_SYSTEM_PROMPT
+      systemPrompt: DM_SYSTEM_PROMPT,
+      model: this.model
     });
 
     const log = {
