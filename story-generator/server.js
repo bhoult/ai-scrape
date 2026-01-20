@@ -1,8 +1,10 @@
 import express from 'express';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync, readFileSync } from 'fs';
 import { GameEngine, listStories } from './src/game-engine.js';
-import { AVAILABLE_MODELS, DEFAULT_MODEL } from './src/config.js';
+import { fetchAvailableModels, getAvailableModels, getDefaultModel } from './src/config.js';
+import { exportStoryToPDF } from './src/pdf-export.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -15,15 +17,49 @@ app.use('/stories', express.static(join(__dirname, 'stories')));
 
 let gameEngine = null;
 
+// Get current models (uses getter functions for dynamic values)
+function getModels() {
+  return {
+    models: getAvailableModels(),
+    default: getDefaultModel()
+  };
+}
+
 // Get available models
 app.get('/api/models', (req, res) => {
+  const { models, default: defaultModel } = getModels();
   res.json({
-    models: AVAILABLE_MODELS,
-    default: DEFAULT_MODEL
+    models,
+    default: defaultModel
   });
 });
 
-// Set model for current game
+// Set models for current game (role-specific)
+app.post('/api/game/models', (req, res) => {
+  try {
+    if (!gameEngine) {
+      return res.status(400).json({ error: 'No game in progress' });
+    }
+
+    const { models: roleModels } = req.body;
+    const { models: availableModels } = getModels();
+
+    // Validate each model
+    for (const [role, model] of Object.entries(roleModels || {})) {
+      if (model && !availableModels[model]) {
+        return res.status(400).json({ error: `Invalid model for ${role}: ${model}` });
+      }
+    }
+
+    gameEngine.setModels(roleModels);
+    res.json({ success: true, models: roleModels });
+  } catch (error) {
+    console.error('Error setting models:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Backward compatibility: Set single model for all roles
 app.post('/api/game/model', (req, res) => {
   try {
     if (!gameEngine) {
@@ -31,7 +67,8 @@ app.post('/api/game/model', (req, res) => {
     }
 
     const { model } = req.body;
-    if (!model || !AVAILABLE_MODELS[model]) {
+    const { models } = getModels();
+    if (!model || !models[model]) {
       return res.status(400).json({ error: 'Invalid model' });
     }
 
@@ -58,8 +95,11 @@ app.get('/api/stories', (req, res) => {
 app.post('/api/stories/:id/load', async (req, res) => {
   try {
     const { id } = req.params;
-    const { generateMissingImages, model } = req.body;
-    gameEngine = new GameEngine(model || DEFAULT_MODEL);
+    const { generateMissingImages, models: roleModels } = req.body;
+    const { default: defaultModel } = getModels();
+    // Use provided role models or fall back to default for all
+    const models = roleModels || { dm: defaultModel, character: defaultModel, narrator: defaultModel };
+    gameEngine = new GameEngine(models);
     const result = await gameEngine.loadFromStory(id, !!generateMissingImages);
 
     res.json({
@@ -68,7 +108,7 @@ app.post('/api/stories/:id/load', async (req, res) => {
       worldState: result.worldState,
       storyContent: result.storyContent,
       storyId: result.storyId,
-      model: result.model
+      models: result.models
     });
   } catch (error) {
     console.error('Error loading story:', error);
@@ -78,13 +118,16 @@ app.post('/api/stories/:id/load', async (req, res) => {
 
 app.post('/api/game', async (req, res) => {
   try {
-    const { seed, model } = req.body;
+    const { seed, models: roleModels, authorStyle } = req.body;
     if (!seed) {
       return res.status(400).json({ error: 'Seed is required' });
     }
 
-    gameEngine = new GameEngine(model || DEFAULT_MODEL);
-    const result = await gameEngine.initializeFromSeed(seed);
+    const { default: defaultModel } = getModels();
+    // Use provided role models or fall back to default for all
+    const models = roleModels || { dm: defaultModel, character: defaultModel, narrator: defaultModel };
+    gameEngine = new GameEngine(models);
+    const result = await gameEngine.initializeFromSeed(seed, authorStyle || null);
 
     res.json({
       success: true,
@@ -210,6 +253,93 @@ app.get('/api/game/log', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Story Generator server running at http://localhost:${PORT}`);
+// Export story as PDF
+app.get('/api/stories/:id/export/pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const includeCharacters = req.query.includeCharacters !== 'false';
+    const imageSize = ['small', 'medium', 'large'].includes(req.query.imageSize)
+      ? req.query.imageSize
+      : 'medium';
+
+    const storyPath = join(__dirname, 'stories', id);
+    const pdfBuffer = await exportStoryToPDF(storyPath, {
+      includeCharacters,
+      imageSize
+    });
+
+    // Create a safe filename from the story ID
+    const filename = `${id}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Error exporting PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
+
+// Get novel content for a story
+app.get('/api/stories/:id/novel', (req, res) => {
+  try {
+    const { id } = req.params;
+    const novelPath = join(__dirname, 'stories', id, 'novel.md');
+
+    if (!existsSync(novelPath)) {
+      return res.status(404).json({ error: 'Novel not found. The novel is generated at the end of each in-game day.' });
+    }
+
+    const content = readFileSync(novelPath, 'utf-8');
+    res.json({ success: true, content });
+  } catch (error) {
+    console.error('Error reading novel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Download novel as markdown file
+app.get('/api/stories/:id/novel/download', (req, res) => {
+  try {
+    const { id } = req.params;
+    const novelPath = join(__dirname, 'stories', id, 'novel.md');
+
+    if (!existsSync(novelPath)) {
+      return res.status(404).json({ error: 'Novel not found' });
+    }
+
+    const content = readFileSync(novelPath, 'utf-8');
+    const filename = `${id}-novel.md`;
+
+    res.setHeader('Content-Type', 'text/markdown');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(content);
+  } catch (error) {
+    console.error('Error downloading novel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check if novel exists for a story
+app.get('/api/stories/:id/novel/exists', (req, res) => {
+  try {
+    const { id } = req.params;
+    const novelPath = join(__dirname, 'stories', id, 'novel.md');
+    res.json({ exists: existsSync(novelPath) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Fetch available models before starting server
+async function startServer() {
+  console.log('Fetching available models from Fireworks API...');
+  await fetchAvailableModels();
+
+  app.listen(PORT, () => {
+    console.log(`Story Generator server running at http://localhost:${PORT}`);
+  });
+}
+
+startServer();

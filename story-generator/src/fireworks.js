@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { FIREWORKS_API_URL, FIREWORKS_MODEL, AVAILABLE_MODELS, getApiKey, LLM_CONFIG } from './config.js';
+import { FIREWORKS_API_URL, getAvailableModels, getFireworksModel, getApiKey, LLM_CONFIG } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -69,10 +69,11 @@ export function logImagePrompt(prompt, metadata, modelKey = 'z-image-turbo') {
 }
 
 export function getModelId(modelKey) {
-  if (modelKey && AVAILABLE_MODELS[modelKey]) {
-    return AVAILABLE_MODELS[modelKey].id;
+  const models = getAvailableModels();
+  if (modelKey && models[modelKey]) {
+    return models[modelKey].id;
   }
-  return FIREWORKS_MODEL;
+  return getFireworksModel();
 }
 
 export async function queryLLM(prompt, options = {}) {

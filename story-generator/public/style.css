@@ -195,6 +195,53 @@ header h1 {
   background: #6a6a4a;
 }
 
+.story-pdf-btn {
+  background: #8b4513;
+  color: white;
+}
+
+.story-pdf-btn:hover {
+  background: #a0522d;
+}
+
+.story-novel-btn {
+  background: #6b5b95;
+  color: white;
+}
+
+.story-novel-btn:hover {
+  background: #8b7bb5;
+}
+
+.novel-menu {
+  background: #1e2a4a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.novel-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: transparent;
+  border: none;
+  color: #eee;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.novel-menu-item:hover {
+  background: #2a3a5a;
+}
+
+.novel-menu-item:not(:last-child) {
+  border-bottom: 1px solid #333;
+}
+
 .story-continue-btn {
   background: #0f3460;
   color: white;
@@ -206,8 +253,21 @@ header h1 {
 
 .controls {
   display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.controls-top {
+  display: flex;
   gap: 1rem;
   align-items: flex-start;
+}
+
+.options-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 #seed {
@@ -243,19 +303,57 @@ button {
   transition: all 0.2s;
 }
 
-#model-select {
+.model-selects {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.model-select-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.model-select-group label {
+  font-size: 12px;
+  color: #888;
+  white-space: nowrap;
+}
+
+.model-select-group select {
+  padding: 0.4rem;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #16213e;
+  color: #eee;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 150px;
+}
+
+.model-select-group select:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+#author-style {
   padding: 0.5rem;
   border: 1px solid #333;
   border-radius: 6px;
   background: #16213e;
   color: #eee;
   font-size: 14px;
-  cursor: pointer;
+  width: 200px;
 }
 
-#model-select:focus {
+#author-style:focus {
   outline: none;
   border-color: #e94560;
+}
+
+#author-style::placeholder {
+  color: #666;
 }
 
 #start-btn {
@@ -422,6 +520,28 @@ main {
   font-weight: normal;
 }
 
+.character-card.hostile {
+  border-left: 3px solid #ef4444;
+}
+
+.character-card.friendly {
+  border-left: 3px solid #4ade80;
+}
+
+.disposition {
+  font-size: 10px;
+  font-weight: normal;
+  text-transform: uppercase;
+}
+
+.disposition.hostile {
+  color: #ef4444;
+}
+
+.disposition.friendly {
+  color: #4ade80;
+}
+
 .character-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -470,6 +590,7 @@ main {
 .stat-item .stat-bar-fill.thirst { background: #06b6d4; }
 .stat-item .stat-bar-fill.strength { background: #ef4444; }
 .stat-item .stat-bar-fill.dexterity { background: #a855f7; }
+.stat-item .stat-bar-fill.intelligence { background: #14b8a6; }
 .stat-item .stat-bar-fill.encumbrance { background: #eab308; }
 .stat-item .stat-bar-fill.sanity { background: #22d3ee; }
 .stat-item .stat-bar-fill.anger { background: #f43f5e; }
@@ -492,6 +613,53 @@ main {
 .character-inventory .inventory-items {
   color: #ccc;
 }
+
+.character-attitudes {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #333;
+  font-size: 11px;
+}
+
+.character-attitudes .attitudes-label {
+  color: #888;
+  text-transform: uppercase;
+  font-size: 9px;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.attitude-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.attitude-target {
+  color: #4fc3f7;
+  font-weight: 600;
+  min-width: 60px;
+}
+
+.attitude-feelings {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.attitude-item {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: help;
+}
+
+.attitude-item.love { background: #be185d; color: #fce7f3; }
+.attitude-item.anger { background: #b91c1c; color: #fef2f2; }
+.attitude-item.attraction { background: #c026d3; color: #fdf4ff; }
+.attitude-item.trust { background: #0369a1; color: #e0f2fe; }
+.attitude-item.fear { background: #6b21a8; color: #f3e8ff; }
 
 .stat-change {
   font-size: 10px;
@@ -810,6 +978,17 @@ h2 {
 .story-viewer-body p {
   margin-bottom: 1rem;
   text-align: justify;
+}
+
+.story-viewer-body p em {
+  color: #888;
+  font-style: italic;
+}
+
+.story-viewer-body hr {
+  border: none;
+  border-top: 1px solid #444;
+  margin: 2rem 0;
 }
 
 .story-viewer-body .story-image-container {

@@ -11,6 +11,7 @@ export class WorldState {
     this.characters = [];
     this.deadBodies = [];          // Dead characters converted to objects
     this.discoveredObjects = [];   // Significant objects found with positions
+    this.mapFeatures = [];         // Map features for the surrounding area
     this.flags = new Map();
     this.history = [];
     this.lastTurnActions = {};     // Store actions and dialogue from last turn for proximity communication
@@ -24,9 +25,15 @@ export class WorldState {
     };
     // Narrative arc tracking for long-term coherence
     this.storyGoal = '';           // The ultimate objective characters are working toward
+    this.victoryConditions = null; // { primary, requirements, difficulty } - how to achieve victory
     this.narrativeArc = '';        // Current phase/direction of the story
     this.majorEvents = [];         // Significant events that shape the story
     this.tensions = [];            // Unresolved conflicts or challenges
+    // Story completion tracking
+    this.storyComplete = false;    // Whether the story has ended
+    this.storyEnding = null;       // { type: 'victory'|'defeat'|'other', summary: 'description' }
+    // Author style for novel generation
+    this.authorStyle = null;       // Author whose style to emulate (e.g., "Stephen King", "Hemingway")
   }
 
   initialize(dmResponse) {
@@ -44,6 +51,9 @@ export class WorldState {
     if (dmResponse.storyGoal) {
       this.storyGoal = dmResponse.storyGoal;
     }
+    if (dmResponse.victoryConditions) {
+      this.victoryConditions = dmResponse.victoryConditions;
+    }
     if (dmResponse.narrativeArc) {
       this.narrativeArc = dmResponse.narrativeArc;
     }
@@ -55,6 +65,16 @@ export class WorldState {
     }
     if (Array.isArray(dmResponse.discoveredObjects)) {
       this.discoveredObjects = dmResponse.discoveredObjects;
+    }
+    if (Array.isArray(dmResponse.mapFeatures)) {
+      this.mapFeatures = dmResponse.mapFeatures.map(f => ({
+        ...f,
+        discovered: false,
+        discoveredTurn: null
+      }));
+    }
+    if (dmResponse.authorStyle) {
+      this.authorStyle = dmResponse.authorStyle;
     }
   }
 
@@ -91,7 +111,7 @@ export class WorldState {
           }
           if (update.statsChange && typeof update.statsChange === 'object') {
             if (!character.stats) {
-              character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
+              character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
             }
             for (const [stat, value] of Object.entries(update.statsChange)) {
               if (typeof value === 'number' && value >= 0 && value <= 100) {
@@ -105,6 +125,24 @@ export class WorldState {
               x: typeof update.positionChange.x === 'number' ? update.positionChange.x : (character.position?.x || 0),
               y: typeof update.positionChange.y === 'number' ? update.positionChange.y : (character.position?.y || 0)
             };
+          }
+          // Handle attitude updates
+          if (update.attitudesChange && typeof update.attitudesChange === 'object') {
+            if (!character.attitudes) {
+              character.attitudes = {};
+            }
+            for (const [targetId, feelings] of Object.entries(update.attitudesChange)) {
+              if (typeof feelings === 'object' && feelings !== null) {
+                if (!character.attitudes[targetId]) {
+                  character.attitudes[targetId] = { love: 50, anger: 0, attraction: 0, trust: 50, fear: 0 };
+                }
+                for (const [feeling, value] of Object.entries(feelings)) {
+                  if (typeof value === 'number' && value >= 0 && value <= 100) {
+                    character.attitudes[targetId][feeling] = value;
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -160,6 +198,45 @@ export class WorldState {
       }
     }
 
+    // Handle new characters (max 7 total)
+    if (changes.newCharacters && Array.isArray(changes.newCharacters)) {
+      const MAX_CHARACTERS = 7;
+      for (const newChar of changes.newCharacters) {
+        // Check if we're at the limit
+        if (this.characters.length >= MAX_CHARACTERS) {
+          console.warn(`Cannot add character ${newChar.name}: max ${MAX_CHARACTERS} characters reached`);
+          continue;
+        }
+        // Check for duplicate IDs
+        if (this.characters.some(c => c.id === newChar.id)) {
+          console.warn(`Cannot add character with duplicate ID: ${newChar.id}`);
+          continue;
+        }
+        // Validate required fields
+        if (!newChar.id || !newChar.name) {
+          console.warn('Cannot add character without id and name');
+          continue;
+        }
+        // Add the new character with defaults for missing fields
+        const character = {
+          id: newChar.id,
+          name: newChar.name,
+          appearance: newChar.appearance || {},
+          clothing: newChar.clothing || 'unknown',
+          personality: newChar.personality || 'unknown',
+          goals: newChar.goals || 'unknown',
+          inventory: Array.isArray(newChar.inventory) ? newChar.inventory : [],
+          status: newChar.status || 'healthy',
+          stats: newChar.stats || { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 },
+          position: newChar.position || { x: 0, y: 0 },
+          attitudes: newChar.attitudes || {},
+          disposition: newChar.disposition || 'neutral'
+        };
+        this.characters.push(character);
+        console.log(`Added new character: ${character.name} (${character.disposition})`);
+      }
+    }
+
     // Handle discovered object updates
     if (Array.isArray(changes.discoveredObjects)) {
       for (const obj of changes.discoveredObjects) {
@@ -188,6 +265,13 @@ export class WorldState {
     if (Array.isArray(changes.removedObjects)) {
       const removeIds = new Set(changes.removedObjects);
       this.discoveredObjects = this.discoveredObjects.filter(o => !removeIds.has(o.id));
+    }
+
+    // Handle discovered map features
+    if (Array.isArray(changes.discoveredMapFeatures)) {
+      for (const featureId of changes.discoveredMapFeatures) {
+        this.discoverFeature(featureId, this.turnNumber);
+      }
     }
   }
 
@@ -220,6 +304,7 @@ export class WorldState {
 
   getStateSnapshot() {
     // Deep copy to prevent reference mutations affecting snapshots
+    // Note: mapFeatures is stored separately in map.json, not in state snapshots
     return JSON.parse(JSON.stringify({
       turnNumber: this.turnNumber,
       summary: this.summary,
@@ -232,9 +317,13 @@ export class WorldState {
       time: this.time,
       environment: this.environment,
       storyGoal: this.storyGoal,
+      victoryConditions: this.victoryConditions,
       narrativeArc: this.narrativeArc,
       majorEvents: this.majorEvents,
-      tensions: this.tensions
+      tensions: this.tensions,
+      storyComplete: this.storyComplete,
+      storyEnding: this.storyEnding,
+      authorStyle: this.authorStyle
     }));
   }
 
@@ -244,6 +333,25 @@ export class WorldState {
     const dx = (pos1.x || 0) - (pos2.x || 0);
     const dy = (pos1.y || 0) - (pos2.y || 0);
     return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Get map features visible from a given position
+  getVisibleMapFeatures(position) {
+    if (!position) return [];
+    return this.mapFeatures.filter(feature => {
+      const distance = this.getDistance(position, feature.position);
+      return distance <= feature.visibleFrom;
+    });
+  }
+
+  // Mark a map feature as discovered
+  discoverFeature(featureId, turn) {
+    const feature = this.mapFeatures.find(f => f.id === featureId);
+    if (feature && !feature.discovered) {
+      feature.discovered = true;
+      feature.discoveredTurn = turn;
+      console.log(`[Discovery] Map feature "${feature.name}" discovered on turn ${turn}`);
+    }
   }
 
   // Get characters within communication range of a given character

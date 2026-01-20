@@ -22,11 +22,50 @@ Your role:
 
 Always respond in the specified JSON format with a single action.`;
 
-export function dmInitPrompt(seed) {
+export function dmInitPrompt(seed, authorStyle = null) {
+  const authorInstructions = authorStyle
+    ? `\nAUTHOR STYLE: "${authorStyle}" - The novel version of this story will be written in this author's style.`
+    : `\nAUTHOR STYLE: Not specified. Choose an author whose style would be appropriate for this type of story (e.g., Stephen King for horror, Hemingway for survival, Agatha Christie for mystery, etc.). Return your choice in the authorStyle field.`;
+
   return `Parse the following story seed and create the initial world state. Extract characters, setting, situation, and the overall story goal. Determine an appropriate starting day and time for the story.
 
 SEED:
 ${seed}
+${authorInstructions}
+
+VICTORY CONDITIONS (CRITICAL):
+Define how the characters can achieve victory. This should be:
+- SPECIFIC: A clear, achievable objective (not just "survive")
+- CHALLENGING: Difficult to achieve, requiring multiple steps and good decisions
+- POSSIBLE: The map should contain what's needed to achieve victory (place relevant features/resources)
+- DRAMATIC: Should create interesting narrative tension
+
+Examples:
+- "Reach the abandoned radio tower (15km north) and repair the transmitter to call for rescue"
+- "Find and defeat the creature that's been hunting them, recovering the stolen artifact"
+- "Navigate to the hidden temple and retrieve the treasure before the rival expedition"
+
+The victory conditions inform what map features to generate - ensure the path to victory exists but is treacherous.
+
+MAP GENERATION:
+Generate a map of the surrounding area covering approximately 2 days of travel distance (~20km radius from the starting point at position 0,0).
+
+Include 10-20 map features appropriate to the environment type. Distribute them:
+- 3-5 features within 5km (half day travel)
+- 4-6 features within 10km (one day travel)
+- 3-5 features within 20km (1.5 days travel)
+- 2-4 features beyond 20km (2+ days travel)
+
+Feature types to consider:
+- water_source: springs, ponds, rivers, wells - CRITICAL for survival (visibleFrom: 200-500m)
+- shelter: caves, buildings, rock formations (visibleFrom: 300-1000m)
+- landmark: hills, distinctive rocks, dead trees - for navigation (visibleFrom: 500-2000m)
+- terrain: forests, canyons, clearings (visibleFrom: 500-1500m)
+- resource: wreckage, abandoned sites, supplies (visibleFrom: 200-500m)
+- hazard: cliffs, quicksand, dangerous wildlife areas (visibleFrom: 100-300m)
+
+Each feature should have realistic visibility range based on its size and type.
+Position coordinates are in meters from origin (starting point at 0,0).
 
 Respond with a JSON object containing:
 {
@@ -50,6 +89,11 @@ Respond with a JSON object containing:
     "temperature": "hot/warm/mild/cold/freezing"
   },
   "storyGoal": "The ultimate objective the characters are trying to achieve (e.g., 'Survive and find rescue from the desert')",
+  "victoryConditions": {
+    "primary": "The specific achievement that ends the story in victory (e.g., 'Reach the radio tower and call for rescue')",
+    "requirements": ["List of things that must happen or be obtained", "e.g., 'Find working radio equipment'", "'Reach high ground for signal'"],
+    "difficulty": "Description of why this is challenging but achievable"
+  },
   "narrativeArc": "Current phase of the story (e.g., 'Introduction - characters assess their situation')",
   "majorEvents": ["The plane crashed in the desert"],
   "tensions": ["Immediate need for water", "Unknown location", "Limited supplies"],
@@ -62,6 +106,20 @@ Respond with a JSON object containing:
       "status": "discovered"
     }
   ],
+  "mapFeatures": [
+    {
+      "id": "map_feature_id",
+      "type": "water_source|shelter|hazard|landmark|resource|terrain",
+      "name": "Feature Name",
+      "description": "What it looks like from afar and up close",
+      "position": { "x": 5000, "y": 3000 },
+      "size": 100,
+      "visibleFrom": 500,
+      "resources": ["water", "shade"],
+      "hazards": ["wildlife"],
+      "shelter": true
+    }
+  ],
   "location": {
     "id": "location_id",
     "name": "Location Name",
@@ -72,25 +130,26 @@ Respond with a JSON object containing:
   },
   "characters": [
     {
+      "_comment": "Characters can be humans, animals, aliens, robots, creatures, etc. Adapt fields appropriately.",
       "id": "character_id",
       "name": "Character Name",
       "appearance": {
-        "gender": "male/female",
-        "age": "approximate age or range",
-        "height": "short/average/tall or specific",
-        "build": "slim/average/heavy/muscular",
-        "hairColor": "hair color",
-        "hairLength": "bald/short/medium/long",
-        "hairStyle": "straight/curly/wavy/tied back/etc.",
-        "facialHair": "none/stubble/short beard/long beard/mustache/etc.",
-        "eyeColor": "eye color",
-        "skinTone": "pale/fair/tan/olive/brown/dark",
-        "face": "face shape or notable facial features",
-        "distinguishing": "scars, tattoos, glasses, other notable features"
+        "gender": "male/female/none/unknown",
+        "age": "approximate age, maturity, or model version",
+        "height": "size description (short/average/tall or specific)",
+        "build": "body type (slim/muscular/bulky/sleek/quadruped/etc.)",
+        "hairColor": "hair/fur/feathers/scales color (or n/a)",
+        "hairLength": "length (or n/a for non-applicable)",
+        "hairStyle": "style (or n/a)",
+        "facialHair": "facial hair or features (or n/a)",
+        "eyeColor": "eye color or sensor type",
+        "skinTone": "skin/fur/scales/plating color and texture",
+        "face": "face/head shape or notable features",
+        "distinguishing": "scars, markings, damage, unique traits, species indicators"
       },
-      "clothing": "Current clothing and accessories",
-      "personality": "Key personality traits",
-      "goals": "What this character wants",
+      "clothing": "Current clothing/accessories (or 'none' for animals/creatures)",
+      "personality": "Key personality/behavioral traits",
+      "goals": "What this character wants (survival, hunting, protecting territory, etc.)",
       "inventory": [],
       "status": "healthy",
       "stats": {
@@ -100,6 +159,7 @@ Respond with a JSON object containing:
         "thirst": 0,
         "strength": 50,
         "dexterity": 50,
+        "intelligence": 50,
         "encumbrance": 0,
         "sanity": 100,
         "anger": 0,
@@ -109,10 +169,21 @@ Respond with a JSON object containing:
         "x": 0,
         "y": 0,
         "_comment": "Position in meters relative to scene center. Characters near each other (within 20m) can communicate."
+      },
+      "attitudes": {
+        "other_character_id": {
+          "love": 50,
+          "anger": 0,
+          "attraction": 0,
+          "trust": 50,
+          "fear": 0,
+          "_comment": "Feelings towards other characters (0-100). Initialize based on relationships in the seed."
+        }
       }
     }
   ],
-  "worldSummary": "Brief summary of the current situation"
+  "worldSummary": "Brief summary of the current situation",
+  "authorStyle": "${authorStyle || 'Author name appropriate for this story type (e.g., Stephen King, Hemingway, etc.)'}"
 }`;
 }
 
@@ -199,6 +270,7 @@ function buildPlayerContext(character, worldState, recentHistory) {
     `Thirst: ${stats.thirst ?? 0}%`,
     `Strength: ${stats.strength ?? 50}%`,
     `Dexterity: ${stats.dexterity ?? 50}%`,
+    `Intelligence: ${stats.intelligence ?? 50}%`,
     `Encumbrance: ${stats.encumbrance ?? 0}%`,
     `Sanity: ${stats.sanity ?? 100}%`,
     `Anger: ${stats.anger ?? 0}%`,
@@ -207,6 +279,18 @@ function buildPlayerContext(character, worldState, recentHistory) {
 
   const positionStr = character.position ?
     `Position: (${character.position.x}, ${character.position.y}) meters from center` : '';
+
+  // Format attitudes towards other characters
+  const attitudes = character.attitudes || {};
+  const attitudesStr = Object.entries(attitudes).map(([targetId, feelings]) => {
+    const targetChar = worldState.characters.find(c => c.id === targetId);
+    const targetName = targetChar ? targetChar.name : targetId;
+    const feelingsStr = Object.entries(feelings)
+      .filter(([key, val]) => !key.startsWith('_') && typeof val === 'number')
+      .map(([key, val]) => `${key}:${val}%`)
+      .join(', ');
+    return `  Towards ${targetName}: ${feelingsStr}`;
+  }).join('\n');
 
   return {
     historyText,
@@ -219,8 +303,55 @@ function buildPlayerContext(character, worldState, recentHistory) {
     bodiesHere,
     discoveredObjectsStr,
     statsStr,
-    positionStr
+    positionStr,
+    attitudesStr
   };
+}
+
+// Build visible map features text for DM resolution
+function buildVisibleFeaturesText(worldState) {
+  if (!worldState.mapFeatures || worldState.mapFeatures.length === 0) {
+    return 'No map features available.';
+  }
+
+  const lines = [];
+  for (const char of worldState.characters || []) {
+    const charPos = char.position || { x: 0, y: 0 };
+    const visibleFeatures = worldState.mapFeatures.filter(feature => {
+      const dx = charPos.x - feature.position.x;
+      const dy = charPos.y - feature.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      return distance <= feature.visibleFrom;
+    }).map(feature => {
+      const dx = charPos.x - feature.position.x;
+      const dy = charPos.y - feature.position.y;
+      const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+      const direction = getDirection(dx, dy);
+      return `  - ${feature.name} (${feature.type}) ~${distance}m to the ${direction}${feature.discovered ? ' [DISCOVERED]' : ''}`;
+    });
+
+    if (visibleFeatures.length > 0) {
+      lines.push(`${char.name} can see:`);
+      lines.push(...visibleFeatures);
+    }
+  }
+
+  return lines.length > 0 ? lines.join('\n') : 'No features currently visible to any character.';
+}
+
+// Get cardinal direction from delta coordinates
+function getDirection(dx, dy) {
+  // Note: dx is west-east (negative = east), dy is north-south (negative = north)
+  const angle = Math.atan2(-dy, -dx) * 180 / Math.PI;
+  if (angle >= -22.5 && angle < 22.5) return 'east';
+  if (angle >= 22.5 && angle < 67.5) return 'northeast';
+  if (angle >= 67.5 && angle < 112.5) return 'north';
+  if (angle >= 112.5 && angle < 157.5) return 'northwest';
+  if (angle >= 157.5 || angle < -157.5) return 'west';
+  if (angle >= -157.5 && angle < -112.5) return 'southwest';
+  if (angle >= -112.5 && angle < -67.5) return 'south';
+  if (angle >= -67.5 && angle < -22.5) return 'southeast';
+  return 'unknown';
 }
 
 // Phase 1: Think and Talk - Player considers the situation and communicates with nearby characters
@@ -256,8 +387,22 @@ YOUR CHARACTER:
 - Status: ${character.status}
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
+${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
 
-Consider your physical and mental condition. High hunger/thirst impairs performance. Low stamina limits strenuous activity. Low sanity may cause irrational behavior. High anger may cause aggressive actions. High fear may cause hesitation.
+CRITICAL - Your stats MUST affect your behavior:
+- Stamina 0-10%: You are EXHAUSTED. You can barely move, may collapse. Only rest or urgent survival actions.
+- Stamina 11-30%: Very tired. Avoid physical exertion. Move slowly, rest frequently.
+- Health 0-20%: CRITICALLY INJURED. Every action is agony. Focus only on survival/medical help.
+- Health 21-50%: Wounded. Physical actions are impaired and painful.
+- Hunger 70-100%: STARVING. Obsess about food. Difficulty concentrating on anything else.
+- Thirst 70-100%: DESPERATE for water. This overrides most other concerns.
+- Sanity 0-20%: BREAKING DOWN. Hallucinate, talk to yourself, make irrational/paranoid decisions.
+- Sanity 21-40%: Unstable. Erratic behavior, poor judgment, may misinterpret situations.
+- Anger 70-100%: FURIOUS. Aggressive, confrontational, may lash out or make rash decisions.
+- Fear 70-100%: TERRIFIED. May freeze, flee, refuse dangerous actions, or panic.
+- Encumbrance 80-100%: OVERBURDENED. Cannot run, very slow movement, may need to drop items.
+
+Consider your attitudes towards other characters when interacting with them.
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -311,8 +456,22 @@ YOUR CHARACTER:
 - Status: ${character.status}
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
+${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
 
-Consider your physical and mental condition when deciding actions.
+CRITICAL - Your stats MUST affect your actions:
+- Stamina 0-10%: EXHAUSTED - collapse, can barely move, only rest or desperate survival
+- Stamina 11-30%: Very tired - no running, no strenuous activity
+- Health 0-20%: CRITICAL - every movement is agony, focus on medical help
+- Health 21-50%: Wounded - physical actions impaired and painful
+- Hunger 70%+: STARVING - obsess about food, poor concentration
+- Thirst 70%+: DESPERATE for water - overrides other concerns
+- Sanity 0-20%: BREAKING - hallucinate, irrational, paranoid
+- Sanity 21-40%: Unstable - erratic, poor judgment
+- Anger 70%+: FURIOUS - aggressive, may lash out
+- Fear 70%+: TERRIFIED - may freeze, flee, or panic
+- Encumbrance 80%+: OVERBURDENED - very slow, drop items
+
+Consider your attitudes towards other characters.
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -337,7 +496,7 @@ Respond with JSON:
 }`;
 }
 
-export function dmResolutionPrompt(worldState, characterActions, dmInstructions = null) {
+export function dmResolutionPrompt(worldState, characterActions, characterSpeech = [], dmInstructions = null) {
   const actionsText = characterActions.map(ca => {
     let text = `${ca.character.name}: ${ca.action}`;
     if (ca.dialogue) {
@@ -345,6 +504,10 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
     }
     return text;
   }).join('\n');
+
+  const speechText = characterSpeech.length > 0
+    ? characterSpeech.map(cs => `${cs.name} says: "${cs.speech}"`).join('\n')
+    : 'No dialogue this turn';
 
   const charactersText = worldState.characters.map(c => {
     const appearance = c.appearance || {};
@@ -362,10 +525,18 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
       appearance.distinguishing
     ].filter(Boolean).join(', ');
     const stats = c.stats || {};
-    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% ENC:${stats.encumbrance ?? 0}% SAN:${stats.sanity ?? 100}% ANG:${stats.anger ?? 0}% FER:${stats.fear ?? 0}%`;
+    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}% STR:${stats.strength ?? 50}% DEX:${stats.dexterity ?? 50}% INT:${stats.intelligence ?? 50}% ENC:${stats.encumbrance ?? 0}% SAN:${stats.sanity ?? 100}% ANG:${stats.anger ?? 0}% FER:${stats.fear ?? 0}%`;
     const posStr = c.position ? ` at position (${c.position.x}, ${c.position.y})` : '';
+    const attitudesStr = c.attitudes ? Object.entries(c.attitudes).map(([targetId, feelings]) => {
+      const targetChar = worldState.characters.find(ch => ch.id === targetId);
+      const targetName = targetChar ? targetChar.name : targetId;
+      const feelingsArr = Object.entries(feelings)
+        .filter(([key, val]) => !key.startsWith('_') && typeof val === 'number')
+        .map(([key, val]) => `${key}:${val}%`);
+      return `${targetName}[${feelingsArr.join(',')}]`;
+    }).join(', ') : '';
     return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}${posStr}, inventory: [${safeJoin(c.inventory) || 'nothing'}]
-    Stats: ${statsStr}`;
+    Stats: ${statsStr}${attitudesStr ? `\n    Attitudes: ${attitudesStr}` : ''}`;
   }).join('\n');
 
   // Dead bodies info
@@ -383,6 +554,9 @@ export function dmResolutionPrompt(worldState, characterActions, dmInstructions 
         return `- ${obj.name} (${obj.id})${posStr}: ${obj.description || 'no description'}`;
       }).join('\n')
     : '';
+
+  // Visible map features
+  const visibleFeaturesText = buildVisibleFeaturesText(worldState);
 
   const dmInstructionsText = dmInstructions
     ? `\nDM INSTRUCTIONS (incorporate these into the narrative):\n${dmInstructions}\n`
@@ -406,6 +580,7 @@ CURRENT TIME: ${formatTime(worldState.time)}
 ENVIRONMENT: ${envText}
 
 STORY GOAL: ${worldState.storyGoal || 'Not established'}
+VICTORY CONDITIONS: ${worldState.victoryConditions ? `${worldState.victoryConditions.primary} (Requirements: ${(worldState.victoryConditions.requirements || []).join(', ')})` : 'Not established'}
 NARRATIVE ARC: ${worldState.narrativeArc || 'Beginning'}
 MAJOR EVENTS SO FAR: ${majorEventsText}
 CURRENT TENSIONS: ${tensionsText}
@@ -419,21 +594,73 @@ CHARACTERS:
 ${charactersText}
 ${deadBodiesText}${discoveredObjectsText}
 
+VISIBLE MAP FEATURES:
+${visibleFeaturesText}
+
+CHARACTER DIALOGUE THIS TURN:
+${speechText}
+
 CHARACTER ACTIONS THIS TURN:
 ${actionsText}
 ${dmInstructionsText}
+IMPORTANT - DIALOGUE IN NARRATIVE:
+- The narrative MUST include character conversations as dialogue (in quotes)
+- Include what characters say to each other verbatim or paraphrased
+- Show characters responding to each other's speech
+- Dialogue brings scenes to life - don't just describe actions, show the conversation
+
 Resolve these actions realistically. Consider:
 - Characters can ONLY use items in their INVENTORY (listed above for each character)
 - If a character tries to use an item they don't have, the action FAILS
-- What succeeds, fails, or has unexpected outcomes based on CHARACTER STATS
-- High strength = better physical tasks, high dexterity = better fine motor/agility tasks
-- Low health/stamina = actions may fail or have reduced effectiveness
-- High hunger (>50%) or thirst (>50%) = impaired judgment and physical performance
-- High encumbrance (>70%) = movement penalties, may drop items
-- Low sanity (<50%) = character may hallucinate, make irrational decisions, or misinterpret events
-- High anger (>50%) = character may act aggressively, make rash decisions, or lash out
-- High fear (>70%) = character may freeze, flee, or refuse dangerous actions
-- How characters interact with each other
+
+STAT EFFECTS ON ACTIONS (ENFORCE THESE STRICTLY):
+
+STAMINA:
+- 0%: Character COLLAPSES unconscious. They cannot act until stamina recovers above 10%.
+- 1-10%: EXHAUSTED. Character can only crawl, speak weakly, or rest. All physical actions FAIL.
+- 11-30%: Very tired. Running FAILS. Strenuous actions have 50% chance of failure.
+- 31-50%: Fatigued. Physical actions are slower and less effective.
+
+HEALTH:
+- 0%: Character DIES (handled separately).
+- 1-20%: CRITICAL. Character can barely move due to pain. Most actions FAIL. May pass out.
+- 21-50%: Seriously wounded. Physical actions are impaired. May fail or worsen injury.
+
+HUNGER:
+- 80-100%: STARVING. Character is weak, shaky, may faint. -30% to all physical actions.
+- 60-79%: Very hungry. Distracted by hunger. -15% effectiveness. May eat anything available.
+
+THIRST:
+- 80-100%: SEVERE DEHYDRATION. Confusion, weakness, may collapse. Actions often FAIL.
+- 60-79%: Very thirsty. Impaired focus. Will prioritize finding water over other goals.
+
+SANITY:
+- 0-20%: PSYCHOTIC BREAK. Character hallucinates, talks to things that aren't there, may attack allies or flee from nothing. Their actions may be completely different from what they intended.
+- 21-40%: Unstable. Paranoid, sees threats everywhere, makes poor decisions. May misinterpret others' actions.
+- 41-60%: Stressed. Occasional irrational thoughts, easily startled, poor judgment under pressure.
+
+ANGER:
+- 80-100%: ENRAGED. May attack others without provocation. Cannot cooperate. Reckless.
+- 60-79%: Very angry. Confrontational, aggressive responses, may start fights.
+
+FEAR:
+- 80-100%: PARALYZED BY TERROR. Character freezes, cowers, or flees uncontrollably. Cannot perform dangerous actions.
+- 60-79%: Very frightened. May refuse risky actions, flee at first sign of danger.
+
+ENCUMBRANCE:
+- 90-100%: IMMOBILIZED. Cannot move until items are dropped.
+- 70-89%: Heavily burdened. Cannot run, very slow, may need to drop items to act.
+
+ABILITY STATS:
+- High strength (70+) = advantage on physical tasks (lifting, breaking, fighting)
+- Low strength (<30) = struggle with physical tasks, may fail
+- High dexterity (70+) = advantage on agility/precision tasks
+- Low dexterity (<30) = clumsy, may fumble or fail precise actions
+- High intelligence (70+) = better problem-solving, notice details, recall knowledge
+- Low intelligence (<30) = miss obvious solutions, poor planning
+
+Also consider:
+- How characters interact with each other based on their attitudes
 - Environmental effects and discoveries
 - Natural consequences of actions
 - How this advances (or complicates) the story goal
@@ -457,6 +684,27 @@ DEATH:
 - Dead characters become objects ("dead body of [name]") and are removed from play
 - Their inventory remains on their body and can be looted
 
+STORY ENDING:
+The story ends when ONE of these conditions is met:
+1. ALL player characters die - set storyEnding with type "defeat"
+2. The storyGoal is achieved - set storyEnding with type "victory"
+3. The story reaches a natural conclusion (other major resolution) - set storyEnding with type "other"
+
+When the story ends:
+- Write a final, conclusive narrative describing the ending scene
+- Set arcUpdates.storyEnding with type and a brief summary
+- This will be the FINAL turn of the story
+
+NEW CHARACTERS (max 7 total characters in story):
+- You can introduce new characters to advance the narrative
+- Characters can be ANY type: humans, animals, aliens, creatures, robots, monsters, spirits, etc.
+- Add them via newCharacters array in worldChanges
+- New characters need full details: id, name, appearance, clothing, personality, goals, inventory, status, stats, position, attitudes
+- Dispositions: friendly (allies, pets, helpers), neutral (wildlife, strangers), hostile (predators, enemies, monsters)
+- Introduce new characters when narratively appropriate (encounters, discoveries, ambushes, summons, etc.)
+- For non-humans, adapt appearance fields appropriately (e.g., fur color instead of hair, scales, metal plating, etc.)
+- Current character count: ${(worldState.characters || []).length}/7
+
 DISCOVERED OBJECTS & INVENTORY (CRITICAL):
 - discoveredObjects = objects in the world that characters have found
 - character inventory = objects the character is carrying
@@ -474,9 +722,17 @@ Example - Sarah picks up a canteen (obj_canteen):
 - removedObjects: ["obj_canteen"]
 - characterUpdates: [{ id: "char_sarah", inventoryAdd: ["canteen"], ... }]
 
+IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES (e.g., "canteen", "knife", "rope"), NOT object IDs (e.g., "obj_canteen"). Object IDs are only used in removedObjects and discoveredObjects.
+
 - Track significant objects/locations found (water sources, shelter, caches, landmarks, vehicles, etc.)
 - Each discovered object has: id, name, description, position (x, y in meters), status
 - These help characters navigate and plan by showing known resources and landmarks
+
+MAP FEATURE DISCOVERY:
+- When characters travel or look around, reference visible map features in the narrative
+- If a character moves within 100m of a map feature, they discover it - describe it in detail
+- Include discovered feature IDs in the discoveredMapFeatures array in worldChanges
+- Discovered features should be described vividly when first encountered
 
 MANDATORY - characterUpdates MUST reflect ALL state changes:
 - clothingChange: REQUIRED if ANY clothing changes occur. Set to COMPLETE current outfit (e.g., "naked", "torn shirt and jeans", "shirtless in cargo pants"). DO NOT OMIT THIS.
@@ -488,7 +744,7 @@ MANDATORY - characterUpdates MUST reflect ALL state changes:
 
 Respond with JSON:
 {
-  "narrative": "Paragraph describing what happens (3-5 sentences, vivid and engaging)",
+  "narrative": "Paragraph describing what happens INCLUDING character dialogue in quotes (3-5 sentences, vivid and engaging, weave in what characters say to each other)",
   "sceneFocus": "characters|landscape|object|phenomenon - what should dominate the image. Vary this across turns for visual variety!",
   "sceneVisuals": {
     "characterAction": "What characters are doing (used when sceneFocus='characters')",
@@ -505,7 +761,8 @@ Respond with JSON:
     "narrativeArc": "Updated phase of the story (e.g., 'Rising action - characters face first major obstacle')",
     "newMajorEvents": ["Any significant events from this turn, or empty array if none"],
     "tensions": ["Updated list of current unresolved tensions/conflicts"],
-    "storyGoal": "Only update if the goal fundamentally changes, otherwise omit"
+    "storyGoal": "Only update if the goal fundamentally changes, otherwise omit",
+    "storyEnding": null or { "type": "victory|defeat|other", "summary": "Brief description of how the story ended" }
   },
   "worldChanges": {
     "locationUpdates": {
@@ -547,8 +804,91 @@ Respond with JSON:
       }
     ],
     "removedObjects": ["obj_old_item_id"],
+    "discoveredMapFeatures": ["map_feature_id1", "map_feature_id2"],
+    "newCharacters": [
+      {
+        "id": "char_newcomer",
+        "name": "Name (human, animal, creature, robot, etc.)",
+        "appearance": {
+          "gender": "male/female/none/unknown",
+          "age": "age or maturity description",
+          "height": "size description",
+          "build": "body type (slim/muscular/bulky/sleek/etc.)",
+          "hairColor": "hair/fur/feathers/scales color or n/a",
+          "hairLength": "length or n/a",
+          "hairStyle": "style or n/a",
+          "facialHair": "facial features or n/a",
+          "eyeColor": "eye color/type",
+          "skinTone": "skin/fur/scales/metal/etc. color",
+          "face": "face/head description",
+          "distinguishing": "notable features (scars, markings, damage, unique traits)"
+        },
+        "clothing": "what they wear (or 'none' for animals/creatures)",
+        "personality": "key behavioral traits",
+        "goals": "what this character wants (survival, hunting, protecting, etc.)",
+        "inventory": ["items", "they", "carry"],
+        "status": "healthy/injured/hostile/hunting/etc",
+        "stats": { "health": 100, "stamina": 100, "hunger": 0, "thirst": 0, "strength": 50, "dexterity": 50, "intelligence": 50, "encumbrance": 0, "sanity": 100, "anger": 0, "fear": 0 },
+        "position": { "x": 15, "y": -10 },
+        "attitudes": { "char_existing": { "love": 0, "anger": 50, "attraction": 0, "trust": 10, "fear": 0 } },
+        "disposition": "friendly/neutral/hostile"
+      }
+    ],
     "newLocation": null
   },
   "worldSummary": "Updated brief summary of situation after this turn"
+}`;
+}
+
+// Novel writing prompt - called at the end of each day
+export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle, isContinuation = false) {
+  const eventsText = dayEvents.map((event, i) => `${i + 1}. ${event}`).join('\n');
+
+  const charactersText = worldState.characters.map(c => {
+    return `- ${c.name}: ${c.personality || 'Unknown personality'}`;
+  }).join('\n');
+
+  const chapterContext = isContinuation
+    ? `This is a CONTINUATION of Day ${dayNumber} - the day is still ongoing but enough has happened to warrant a new chapter.`
+    : `This covers the events of Day ${dayNumber}.`;
+
+  return `You are writing a novel chapter in the style of ${authorStyle}.
+
+TASK: Transform the following game events into a compelling novel chapter. Write prose, not a game log.
+${chapterContext}
+
+AUTHOR STYLE: ${authorStyle}
+- Emulate this author's voice, sentence structure, pacing, and thematic concerns
+- Use their characteristic techniques (e.g., sparse prose for Hemingway, rich description for Tolkien, tension for King)
+- Match their typical chapter length and paragraph structure
+
+CHARACTERS:
+${charactersText}
+
+EVENTS:
+${eventsText}
+
+CURRENT STORY STATE:
+- Location: ${worldState.currentLocation?.name || 'Unknown'}
+- Story Goal: ${worldState.storyGoal || 'Survival'}
+- Tensions: ${(worldState.tensions || []).join(', ') || 'None'}
+
+REQUIREMENTS:
+1. Write a flowing narrative chapter - NO time stamps, NO turn markers, NO game mechanics
+2. Include character dialogue naturally woven into the prose
+3. Describe settings, emotions, and sensory details in the author's style
+4. Maintain narrative tension and pacing appropriate to the author
+5. The chapter should read like an actual published novel excerpt
+6. Length: 800-1500 words (adjust based on author's typical style)
+
+Also provide condensed summaries for record-keeping.
+
+Respond with JSON:
+{
+  "chapterTitle": "An evocative chapter title in the author's style",
+  "chapterText": "The full novel chapter text...",
+  "historySummary": "2-3 sentence summary of what happened for the history log",
+  "majorEventsSummary": ["Brief bullet points of significant events"],
+  "storyContentSummary": "A one-paragraph summary of the narrative"
 }`;
 }

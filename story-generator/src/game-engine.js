@@ -6,6 +6,7 @@ import { WorldState } from './world-state.js';
 import { DMAgent } from './agents/dm-agent.js';
 import { PlayerAgent } from './agents/player-agent.js';
 import { queryLLMJSON, setLogsDir, logImagePrompt } from './fireworks.js';
+import { novelWritingPrompt } from './prompts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORIES_DIR = join(__dirname, '../stories');
@@ -33,7 +34,7 @@ export function listStories() {
 }
 
 export class GameEngine {
-  constructor(model = null) {
+  constructor(models = null) {
     this.worldState = null;
     this.dmAgent = null;
     this.playerAgents = [];
@@ -44,18 +45,34 @@ export class GameEngine {
     this.storyContent = [];
     this.createdAt = null;
     this.sceneDescriptions = []; // Array of { turn, sceneFocus, sceneVisuals, narrative, imagePath, success }
-    this.model = model; // LLM model to use
+    // Role-specific models: { dm, character, narrator }
+    this.models = typeof models === 'object' && models !== null
+      ? { dm: models.dm || null, character: models.character || null, narrator: models.narrator || null }
+      : { dm: models, character: models, narrator: models }; // Backward compatibility: single model for all
     this.turnSnapshots = []; // Array of world state snapshots at each turn for rollback
+    this.currentDay = 1; // Track current day for novel generation
+    this.dayEvents = []; // Events that happened during current day
+    this.lastNovelTurn = 0; // Track when the last novel chapter was generated
   }
 
-  setModel(model) {
-    this.model = model;
+  setModels(models) {
+    if (typeof models === 'object' && models !== null) {
+      this.models = { dm: models.dm || null, character: models.character || null, narrator: models.narrator || null };
+    } else {
+      // Single model for all roles (backward compatibility)
+      this.models = { dm: models, character: models, narrator: models };
+    }
     if (this.dmAgent) {
-      this.dmAgent.setModel(model);
+      this.dmAgent.setModel(this.models.dm);
     }
     for (const agent of this.playerAgents) {
-      agent.setModel(model);
+      agent.setModel(this.models.character);
     }
+  }
+
+  // Backward compatibility
+  setModel(model) {
+    this.setModels(model);
   }
 
   generateStoryId(seed) {
@@ -77,11 +94,93 @@ export class GameEngine {
     return join(this.getStoryDir(), 'images');
   }
 
+  deriveExpression(character) {
+    const stats = character.stats || {};
+    const expressions = [];
+
+    // Derive expression from emotional/physical state (prioritize most extreme conditions)
+    const fear = stats.fear ?? 0;
+    const anger = stats.anger ?? 0;
+    const sanity = stats.sanity ?? 100;
+    const health = stats.health ?? 100;
+    const stamina = stats.stamina ?? 100;
+    const hunger = stats.hunger ?? 0;
+    const thirst = stats.thirst ?? 0;
+
+    // High fear - terrified expressions
+    if (fear >= 80) {
+      expressions.push('terrified wide-eyed expression');
+    } else if (fear >= 60) {
+      expressions.push('fearful anxious look');
+    } else if (fear >= 40) {
+      expressions.push('nervous wary expression');
+    }
+
+    // High anger - aggressive expressions
+    if (anger >= 80) {
+      expressions.push('furious snarling expression');
+    } else if (anger >= 60) {
+      expressions.push('angry scowling face');
+    } else if (anger >= 40) {
+      expressions.push('irritated frown');
+    }
+
+    // Low sanity - disturbed expressions
+    if (sanity <= 20) {
+      expressions.push('wild-eyed unhinged look');
+    } else if (sanity <= 40) {
+      expressions.push('disturbed haunted expression');
+    } else if (sanity <= 60) {
+      expressions.push('stressed unsettled look');
+    }
+
+    // Low health - pained expressions
+    if (health <= 20) {
+      expressions.push('grimacing in pain');
+    } else if (health <= 40) {
+      expressions.push('pained wounded expression');
+    } else if (health <= 60) {
+      expressions.push('wincing slightly');
+    }
+
+    // Low stamina - exhaustion
+    if (stamina <= 20) {
+      expressions.push('exhausted drooping eyes');
+    } else if (stamina <= 40) {
+      expressions.push('weary tired expression');
+    }
+
+    // High hunger/thirst - desperation
+    if (hunger >= 80 || thirst >= 80) {
+      expressions.push('haggard desperate look');
+    } else if (hunger >= 60 || thirst >= 60) {
+      expressions.push('gaunt strained expression');
+    }
+
+    // If no extreme conditions, derive from general state
+    if (expressions.length === 0) {
+      // Default expressions based on overall wellbeing
+      const avgWellbeing = (health + stamina + sanity) / 3;
+      const avgDistress = (fear + anger + hunger + thirst) / 4;
+
+      if (avgWellbeing >= 80 && avgDistress <= 20) {
+        expressions.push('calm composed expression');
+      } else if (avgWellbeing >= 60) {
+        expressions.push('alert focused expression');
+      } else {
+        expressions.push('tense guarded expression');
+      }
+    }
+
+    return expressions.slice(0, 2).join(', '); // Limit to 2 expressions max
+  }
+
   buildCharacterDescriptions() {
     const characters = this.worldState?.characters || [];
     return characters.map(c => {
       const appearance = c.appearance || {};
       const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
+      const expression = this.deriveExpression(c);
       const parts = [
         c.name,
         appearance.gender,
@@ -94,6 +193,7 @@ export class GameEngine {
         appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
         appearance.face,
         appearance.distinguishing,
+        expression,
         c.clothing ? `wearing ${c.clothing}` : null
       ].filter(Boolean).join(', ');
       return parts;
@@ -286,36 +386,135 @@ export class GameEngine {
     return `Day ${time.day}, ${hour}:${minute}`;
   }
 
+  // Process automatic status effects based on extreme stat values
+  processStatEffects() {
+    for (const char of this.worldState.characters) {
+      const stats = char.stats || {};
+      const oldStatus = char.status;
+      const statusParts = [];
+
+      // Stamina effects
+      if (stats.stamina <= 0) {
+        statusParts.push('collapsed from exhaustion');
+        console.log(`[Stat Effect] ${char.name} collapsed from exhaustion (stamina: ${stats.stamina}%)`);
+      } else if (stats.stamina <= 10) {
+        statusParts.push('barely conscious from exhaustion');
+      } else if (stats.stamina <= 30) {
+        statusParts.push('extremely tired');
+      }
+
+      // Health effects (not death, just status)
+      if (stats.health > 0 && stats.health <= 20) {
+        statusParts.push('critically injured');
+      } else if (stats.health <= 50) {
+        statusParts.push('wounded');
+      }
+
+      // Hunger effects
+      if (stats.hunger >= 90) {
+        statusParts.push('starving');
+      } else if (stats.hunger >= 70) {
+        statusParts.push('very hungry');
+      }
+
+      // Thirst effects
+      if (stats.thirst >= 90) {
+        statusParts.push('severely dehydrated');
+        // Severe dehydration can cause collapse
+        if (stats.thirst >= 95) {
+          statusParts.push('collapsing from dehydration');
+          console.log(`[Stat Effect] ${char.name} collapsing from dehydration (thirst: ${stats.thirst}%)`);
+        }
+      } else if (stats.thirst >= 70) {
+        statusParts.push('very thirsty');
+      }
+
+      // Sanity effects
+      if (stats.sanity <= 20) {
+        statusParts.push('having a mental breakdown');
+        console.log(`[Stat Effect] ${char.name} having mental breakdown (sanity: ${stats.sanity}%)`);
+      } else if (stats.sanity <= 40) {
+        statusParts.push('mentally unstable');
+      }
+
+      // Anger effects
+      if (stats.anger >= 90) {
+        statusParts.push('in a violent rage');
+      } else if (stats.anger >= 70) {
+        statusParts.push('furious');
+      }
+
+      // Fear effects
+      if (stats.fear >= 90) {
+        statusParts.push('paralyzed with terror');
+      } else if (stats.fear >= 70) {
+        statusParts.push('terrified');
+      }
+
+      // Update status if there are effects, otherwise set to healthy if no issues
+      if (statusParts.length > 0) {
+        char.status = statusParts.join(', ');
+      } else if (!oldStatus || oldStatus === 'healthy' || oldStatus.includes('exhaustion') || oldStatus.includes('dehydrat') || oldStatus.includes('starving') || oldStatus.includes('breakdown')) {
+        char.status = 'healthy';
+      }
+
+      if (char.status !== oldStatus) {
+        console.log(`[Stat Effect] ${char.name} status changed: "${oldStatus}" -> "${char.status}"`);
+      }
+    }
+  }
+
   async verifyCharacterStates(narrative, characters, elapsedMinutes = 30) {
     // Build character descriptions for the prompt
     const charDescriptions = characters.map(c => {
       const stats = c.stats || {};
+      const attitudesStr = c.attitudes ? Object.entries(c.attitudes).map(([targetId, feelings]) => {
+        const targetChar = characters.find(ch => ch.id === targetId);
+        const targetName = targetChar ? targetChar.name : targetId;
+        const feelingsArr = Object.entries(feelings)
+          .filter(([key, val]) => !key.startsWith('_') && typeof val === 'number')
+          .map(([key, val]) => `${key}=${val}%`);
+        return `towards ${targetName}: ${feelingsArr.join(', ')}`;
+      }).join('; ') : 'none';
       return `- ${c.name} (id: ${c.id}): clothing="${c.clothing}", status="${c.status}", inventory=[${(c.inventory || []).join(', ')}]
-    Stats: health=${stats.health ?? 100}%, stamina=${stats.stamina ?? 100}%, hunger=${stats.hunger ?? 0}%, thirst=${stats.thirst ?? 0}%, strength=${stats.strength ?? 50}%, dexterity=${stats.dexterity ?? 50}%, encumbrance=${stats.encumbrance ?? 0}%, sanity=${stats.sanity ?? 100}%, anger=${stats.anger ?? 0}%, fear=${stats.fear ?? 0}%`;
+    Stats: health=${stats.health ?? 100}%, stamina=${stats.stamina ?? 100}%, hunger=${stats.hunger ?? 0}%, thirst=${stats.thirst ?? 0}%, strength=${stats.strength ?? 50}%, dexterity=${stats.dexterity ?? 50}%, intelligence=${stats.intelligence ?? 50}%, encumbrance=${stats.encumbrance ?? 0}%, sanity=${stats.sanity ?? 100}%, anger=${stats.anger ?? 0}%, fear=${stats.fear ?? 0}%
+    Attitudes: ${attitudesStr}`;
     }).join('\n');
 
-    const prompt = `Based on this narrative and elapsed time, update character states and stats.
+    // Build list of other character IDs for attitude tracking
+    const characterIds = characters.map(c => ({ id: c.id, name: c.name }));
+
+    const prompt = `Based on this narrative and elapsed time, update character states, stats, and attitudes.
 
 NARRATIVE:
 ${narrative}
 
 ELAPSED TIME: ${elapsedMinutes} minutes
 
+CHARACTERS: ${characterIds.map(c => `${c.name} (${c.id})`).join(', ')}
+
 CURRENT CHARACTER STATES:
 ${charDescriptions}
 
-Update clothing, status, inventory, AND STATS for each character based on what happened.
+Update clothing, status, inventory, stats, AND ATTITUDES for each character based on what happened.
 
 STAT GUIDELINES (all values 0-100):
 - health: Decrease for injuries, increase slowly with rest/medical care
 - stamina: Decrease with physical exertion (running, fighting, climbing), recover with rest
 - hunger: Increase ~2-5% per hour of activity, decrease when eating
 - thirst: Increase ~3-8% per hour (faster in heat/exertion), decrease when drinking
-- strength/dexterity: Usually stable, but temporary penalties from injury/exhaustion
+- strength/dexterity/intelligence: Usually stable, but temporary penalties from injury/exhaustion
 - encumbrance: Based on inventory weight (0=empty hands, 100=overburdened)
 - sanity: Decrease from trauma, horror, isolation, or disturbing events; recover slowly with safety/companionship
 - anger: Increase from frustration, conflict, injustice, or provocation; decrease with time/resolution
 - fear: Increase from danger, threats, or frightening events; decrease with safety or facing fears
+
+ATTITUDE GUIDELINES (all values 0-100, track feelings towards each OTHER character):
+- love: Deep affection, care, emotional bond. Increases with kindness, shared experiences, intimacy.
+- anger: Frustration, resentment towards that person. Increases with conflict, betrayal, insults.
+- attraction: Physical/romantic interest. Increases with flirtation, physical contact, admiration.
+- trust: Reliability, faith in the other person. Increases with honesty, support, kept promises.
+- fear: Fear OF that specific person. Increases with threats, violence, intimidation from them.
 
 Respond with JSON only:
 {
@@ -333,19 +532,29 @@ Respond with JSON only:
         "thirst": 20,
         "strength": 50,
         "dexterity": 50,
+        "intelligence": 50,
         "encumbrance": 10,
         "sanity": 90,
         "anger": 15,
         "fear": 25
+      },
+      "attitudesChange": {
+        "other_character_id": {
+          "love": 50,
+          "anger": 10,
+          "attraction": 20,
+          "trust": 60,
+          "fear": 5
+        }
       }
     }
   ]
 }
 
-ALWAYS include statsChange for EVERY character, even if just natural hunger/thirst increase from elapsed time.`;
+ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     try {
-      const result = await queryLLMJSON(prompt, { model: this.model, role: 'verify-state' });
+      const result = await queryLLMJSON(prompt, { model: this.models.dm, role: 'verify-state' });
       return result.parsed?.characterUpdates || [];
     } catch (err) {
       console.error('Error verifying character states:', err.message);
@@ -369,6 +578,16 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
     mkdirSync(storyDir, { recursive: true });
     mkdirSync(historyDir, { recursive: true });
 
+    // Save map.json if mapFeatures exist
+    if (this.worldState.mapFeatures && this.worldState.mapFeatures.length > 0) {
+      const mapPath = join(storyDir, 'map.json');
+      writeFileSync(mapPath, JSON.stringify({
+        features: this.worldState.mapFeatures,
+        generatedAt: this.createdAt,
+        environment: this.worldState.environment
+      }, null, 2));
+    }
+
     // Build markdown with images
     const mdContent = this.buildMarkdownWithImages();
     const mdPath = join(storyDir, 'story.md');
@@ -387,10 +606,13 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       storyId: this.storyId,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
-      model: this.model,
+      models: this.models,
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
-      sceneDescriptions: this.sceneDescriptions
+      sceneDescriptions: this.sceneDescriptions,
+      currentDay: this.currentDay,
+      dayEvents: this.dayEvents,
+      lastNovelTurn: this.lastNovelTurn
     };
     writeFileSync(jsonPath, JSON.stringify(stateData, null, 2));
   }
@@ -417,7 +639,12 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
             lines.push(validContent[i + 1]);
             i++; // Skip the narrative in the next iteration
           }
-          lines.push(`\n![${scene.description}](images/${scene.imagePath})`);
+          // Build alt text from scene visuals
+          const altText = scene.sceneVisuals?.characterAction ||
+                          scene.sceneVisuals?.objectDescription ||
+                          scene.sceneVisuals?.phenomenonDescription ||
+                          `Scene from ${turnMatch[1] === 'Opening' ? 'Opening' : 'Turn ' + turn}`;
+          lines.push(`\n![${altText}](images/${scene.imagePath})`);
         }
       }
     }
@@ -454,9 +681,16 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       }
     }
 
-    // Restore model from saved state (constructor model is ignored, use saved model)
-    if (data.model) {
-      this.model = data.model;
+    // Restore models from saved state (constructor models are ignored, use saved models)
+    if (data.models) {
+      this.models = {
+        dm: data.models.dm || null,
+        character: data.models.character || null,
+        narrator: data.models.narrator || null
+      };
+    } else if (data.model) {
+      // Backward compatibility: single model for all roles
+      this.models = { dm: data.model, character: data.model, narrator: data.model };
     }
 
     // Restore world state with defensive initialization
@@ -471,9 +705,14 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
 
     // Restore narrative arc tracking
     this.worldState.storyGoal = data.worldState.storyGoal || '';
+    this.worldState.victoryConditions = data.worldState.victoryConditions || null;
     this.worldState.narrativeArc = data.worldState.narrativeArc || '';
     this.worldState.majorEvents = Array.isArray(data.worldState.majorEvents) ? data.worldState.majorEvents : [];
     this.worldState.tensions = Array.isArray(data.worldState.tensions) ? data.worldState.tensions : [];
+
+    // Restore story completion state
+    this.worldState.storyComplete = data.worldState.storyComplete || false;
+    this.worldState.storyEnding = data.worldState.storyEnding || null;
 
     // Ensure currentLocation has all required arrays
     const loc = data.worldState.currentLocation || {};
@@ -497,8 +736,10 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       goals: c.goals || '',
       inventory: Array.isArray(c.inventory) ? c.inventory : [],
       status: c.status || 'unknown',
-      stats: c.stats || { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 },
-      position: c.position || { x: 0, y: 0 }
+      stats: c.stats || { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 },
+      position: c.position || { x: 0, y: 0 },
+      attitudes: c.attitudes || {},
+      disposition: c.disposition || ''
     }));
 
     // Restore dead bodies, discovered objects, and turn action tracking
@@ -506,9 +747,27 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
     this.worldState.discoveredObjects = Array.isArray(data.worldState.discoveredObjects) ? data.worldState.discoveredObjects : [];
     this.worldState.lastTurnActions = data.worldState.lastTurnActions || data.worldState.lastTurnDialogue || {};
 
-    // Recreate agents with model (only for living characters)
-    this.dmAgent = new DMAgent(this.model);
-    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
+    // Restore author style for novel generation
+    this.worldState.authorStyle = data.worldState.authorStyle || null;
+
+    // Restore day tracking for novel generation
+    this.currentDay = data.currentDay || this.worldState.time?.day || 1;
+    this.dayEvents = data.dayEvents || [];
+    this.lastNovelTurn = data.lastNovelTurn || 0;
+
+    // Load map.json if it exists
+    const mapPath = join(storyDir, 'map.json');
+    if (existsSync(mapPath)) {
+      const mapData = JSON.parse(readFileSync(mapPath, 'utf-8'));
+      this.worldState.mapFeatures = mapData.features || [];
+    } else {
+      // Fallback to worldState.mapFeatures if stored there
+      this.worldState.mapFeatures = Array.isArray(data.worldState.mapFeatures) ? data.worldState.mapFeatures : [];
+    }
+
+    // Recreate agents with role-specific models (only for living characters)
+    this.dmAgent = new DMAgent(this.models.dm);
+    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.models.character));
     this.llmLog = [];
     this.initialized = true;
 
@@ -522,7 +781,7 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
       storyId: this.storyId,
-      model: this.model
+      models: this.models
     };
   }
 
@@ -651,6 +910,7 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
     this.worldState.tensions = Array.isArray(ws.tensions) ? [...ws.tensions] : [];
     this.worldState.discoveredObjects = Array.isArray(ws.discoveredObjects) ? ws.discoveredObjects.map(o => ({ ...o })) : [];
     this.worldState.deadBodies = Array.isArray(ws.deadBodies) ? ws.deadBodies.map(b => ({ ...b })) : [];
+    this.worldState.mapFeatures = Array.isArray(ws.mapFeatures) ? ws.mapFeatures.map(f => ({ ...f })) : [];
     this.worldState.history = Array.isArray(ws.history) ? [...ws.history] : [];
 
     // Restore current location
@@ -680,7 +940,7 @@ ALWAYS include statsChange for EVERY character, even if just natural hunger/thir
     this.storyContent = snapshot.storyContent ? [...snapshot.storyContent] : [];
 
     // Update player agents with restored character state
-    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.model));
+    this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.models.character));
 
     // Save state after deletion
     this.saveStory();
@@ -708,7 +968,7 @@ Respond with ONLY a JSON object:
 
     const result = await this.dmAgent.generateSceneDescription ?
       this.dmAgent.generateSceneDescription(narrative, this.worldState.getStateSnapshot()) :
-      await queryLLMJSON(prompt, { model: this.model });
+      await queryLLMJSON(prompt, { model: this.models.dm });
 
     return result.parsed?.sceneDescription || result.sceneDescription || null;
   }
@@ -786,9 +1046,9 @@ Respond with ONLY a JSON object:
     });
   }
 
-  async initializeFromSeed(seed) {
+  async initializeFromSeed(seed, authorStyle = null) {
     this.worldState = new WorldState();
-    this.dmAgent = new DMAgent(this.model);
+    this.dmAgent = new DMAgent(this.models.dm);
     this.playerAgents = [];
     this.llmLog = [];
     this.seed = seed;
@@ -799,13 +1059,13 @@ Respond with ONLY a JSON object:
     // Set logs directory for this story
     setLogsDir(this.getLogsDir());
 
-    const { data, llmLog } = await this.dmAgent.initializeWorld(seed);
+    const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle);
     this.llmLog.push(llmLog);
 
     this.worldState.initialize(data);
 
     for (const character of data.characters) {
-      this.playerAgents.push(new PlayerAgent(character, this.model));
+      this.playerAgents.push(new PlayerAgent(character, this.models.character));
     }
 
     this.initialized = true;
@@ -828,6 +1088,10 @@ Respond with ONLY a JSON object:
       storyContent: [...this.storyContent]
     }];
 
+    // Initialize day tracking for novel generation
+    this.currentDay = data.time?.day || 1;
+    this.dayEvents = [data.narrative]; // Opening narrative is first event of day 1
+
     this.saveStory();
 
     return {
@@ -841,6 +1105,16 @@ Respond with ONLY a JSON object:
   async advanceTurn(dmInstructions = null) {
     if (!this.initialized) {
       throw new Error('Game not initialized. Call initializeFromSeed first.');
+    }
+
+    // Check if story is already complete
+    if (this.worldState.storyComplete) {
+      console.log(`[Story Complete] The story has ended. No more turns can be taken.`);
+      return {
+        narrative: this.worldState.storyEnding?.summary || 'The story has ended.',
+        storyComplete: true,
+        ending: this.worldState.storyEnding
+      };
     }
 
     // Log DM instructions if provided
@@ -868,11 +1142,34 @@ Respond with ONLY a JSON object:
       previousTurnInfoMap[agent.character.id] = this.worldState.getNearbyTurnInfo(agent.character.id);
     }
 
+    // Helper to check if a character is incapacitated
+    const isIncapacitated = (char) => {
+      const stats = char.stats || {};
+      const status = (char.status || '').toLowerCase();
+      return stats.stamina <= 0 ||
+             stats.health <= 0 ||
+             stats.thirst >= 95 ||
+             status.includes('collapsed') ||
+             status.includes('unconscious') ||
+             status.includes('paralyzed');
+    };
+
     // ===== PHASE 1: Think and Talk =====
     // All players consider the situation and speak to nearby characters
     console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 1: Think and Talk`);
     const thinkTalkResults = await Promise.all(
       this.playerAgents.map(agent => {
+        // Incapacitated characters can't act
+        if (isIncapacitated(agent.character)) {
+          console.log(`[Turn ${this.worldState.turnNumber + 1}] ${agent.character.name} is incapacitated and cannot act`);
+          return {
+            character: agent.character,
+            thinking: 'Too weak to think clearly...',
+            intendedAction: null,
+            speech: null,
+            llmLog: { type: 'player-think', character: agent.character.name, skipped: true, reason: 'incapacitated' }
+          };
+        }
         const prevTurnInfo = previousTurnInfoMap[agent.character.id] || [];
         return agent.thinkAndTalk(stateSnapshot, recentHistory, prevTurnInfo);
       })
@@ -908,6 +1205,19 @@ Respond with ONLY a JSON object:
     console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 2: Action`);
     const actionResults = await Promise.all(
       this.playerAgents.map(agent => {
+        // Incapacitated characters can't act
+        if (isIncapacitated(agent.character)) {
+          const reason = agent.character.stats?.stamina <= 0 ? 'lies motionless, too exhausted to move' :
+                        agent.character.stats?.health <= 20 ? 'is too injured to act' :
+                        agent.character.stats?.thirst >= 95 ? 'is delirious from dehydration' :
+                        'is incapacitated';
+          return {
+            character: agent.character,
+            action: `${agent.character.name} ${reason}.`,
+            dialogue: null,
+            llmLog: { type: 'player-action', character: agent.character.name, skipped: true, reason: 'incapacitated' }
+          };
+        }
         const nearbySpeech = nearbySpeechMap[agent.character.id] || [];
         return agent.decideAction(stateSnapshot, recentHistory, nearbySpeech);
       })
@@ -919,6 +1229,14 @@ Respond with ONLY a JSON object:
       dialogue: result.dialogue
     }));
 
+    // Collect all speech from Phase 1 for inclusion in narrative
+    const characterSpeech = thinkTalkResults
+      .filter(result => result.speech)
+      .map(result => ({
+        name: result.character.name,
+        speech: result.speech
+      }));
+
     // Record this turn's action and dialogue for next turn's proximity observation
     for (const result of actionResults) {
       this.worldState.recordTurnAction(result.character.id, result.action, result.dialogue);
@@ -929,8 +1247,15 @@ Respond with ONLY a JSON object:
     const resolution = await this.dmAgent.resolveActions(
       stateSnapshot,
       characterActions,
+      characterSpeech,
       dmInstructions
     );
+
+    // Defensive check for resolution
+    if (!resolution) {
+      throw new Error('DM resolution returned empty or undefined');
+    }
+
     turnLogs.push(resolution.llmLog);
 
     // Log character updates for debugging
@@ -942,6 +1267,17 @@ Respond with ONLY a JSON object:
     }
 
     this.worldState.applyChanges(resolution.worldChanges);
+
+    // Create player agents for any new characters added this turn
+    if (resolution.worldChanges?.newCharacters && Array.isArray(resolution.worldChanges.newCharacters)) {
+      for (const newChar of resolution.worldChanges.newCharacters) {
+        const addedChar = this.worldState.characters.find(c => c.id === newChar.id);
+        if (addedChar && !this.playerAgents.some(agent => agent.character.id === addedChar.id)) {
+          this.playerAgents.push(new PlayerAgent(addedChar, this.models.character));
+          console.log(`[Turn ${this.worldState.turnNumber + 1}] Created player agent for new character: ${addedChar.name}`);
+        }
+      }
+    }
 
     // Calculate elapsed time for stat updates
     const oldTime = stateSnapshot.time || { day: 1, hour: 8, minute: 0 };
@@ -957,6 +1293,9 @@ Respond with ONLY a JSON object:
       this.worldState.applyChanges({ characterUpdates: verifiedUpdates });
     }
 
+    // Process stat-based status effects
+    this.processStatEffects();
+
     // Process deaths - characters with health <= 0 become dead bodies
     const deadCharacters = this.worldState.processDeaths();
     if (deadCharacters.length > 0) {
@@ -968,6 +1307,25 @@ Respond with ONLY a JSON object:
         // Add death to major events
         this.worldState.majorEvents.push(`${deadChar.name} died`);
       }
+    }
+
+    // Check for story ending conditions
+    let storyEnding = resolution.arcUpdates?.storyEnding || null;
+
+    // Check if all characters are dead (automatic defeat)
+    if (!storyEnding && this.worldState.characters.length === 0) {
+      storyEnding = {
+        type: 'defeat',
+        summary: 'All characters have perished. The story ends in tragedy.'
+      };
+      console.log(`[Story Ending] All characters dead - story ends in defeat`);
+    }
+
+    // Apply story ending if detected
+    if (storyEnding) {
+      this.worldState.storyComplete = true;
+      this.worldState.storyEnding = storyEnding;
+      console.log(`[Story Ending] Type: ${storyEnding.type} - ${storyEnding.summary}`);
     }
 
     this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
@@ -996,6 +1354,27 @@ Respond with ONLY a JSON object:
       storyContent: [...this.storyContent]
     });
 
+    // Track events for daily novel generation
+    this.dayEvents.push(resolution.narrative);
+
+    // Check if day changed or 40 turns passed - generate novel chapter
+    const newDay = resolution.time?.day || this.worldState.time?.day || 1;
+    const turnsSinceLastNovel = this.worldState.turnNumber - this.lastNovelTurn;
+
+    if (newDay > this.currentDay) {
+      // Day changed - generate chapter for the completed day
+      await this.generateNovelChapter(this.currentDay);
+      this.lastNovelTurn = this.worldState.turnNumber;
+      this.currentDay = newDay;
+      this.dayEvents = []; // Reset for new day
+    } else if (turnsSinceLastNovel >= 40 && this.dayEvents.length > 0) {
+      // 40 turns passed without day change - generate chapter anyway
+      console.log(`[Novel] 40 turns since last chapter, generating mid-day chapter...`);
+      await this.generateNovelChapter(this.currentDay, true); // true = continuation
+      this.lastNovelTurn = this.worldState.turnNumber;
+      this.dayEvents = []; // Reset events after writing
+    }
+
     this.saveStory();
 
     return {
@@ -1018,7 +1397,10 @@ Respond with ONLY a JSON object:
       })),
       narrative: resolution.narrative,
       worldState: this.worldState.getStateSnapshot(),
-      turnLogs
+      turnLogs,
+      // Story completion info
+      storyComplete: this.worldState.storyComplete || false,
+      storyEnding: this.worldState.storyEnding || null
     };
   }
 
@@ -1031,5 +1413,93 @@ Respond with ONLY a JSON object:
 
   getLLMLog() {
     return this.llmLog;
+  }
+
+  // Generate a novel chapter for a completed day (or mid-day continuation after 40 turns)
+  async generateNovelChapter(dayNumber, isContinuation = false) {
+    const authorStyle = this.worldState.authorStyle;
+    if (!authorStyle) {
+      console.log(`[Novel] No author style set, skipping novel generation for day ${dayNumber}`);
+      return;
+    }
+
+    if (this.dayEvents.length === 0) {
+      console.log(`[Novel] No events for day ${dayNumber}, skipping novel generation`);
+      return;
+    }
+
+    const chapterType = isContinuation ? 'continuation' : 'chapter';
+    console.log(`[Novel] Generating ${chapterType} for Day ${dayNumber} in the style of ${authorStyle}...`);
+
+    try {
+      const prompt = novelWritingPrompt(dayNumber, this.dayEvents, this.worldState.getStateSnapshot(), authorStyle, isContinuation);
+
+      const result = await queryLLMJSON(prompt, {
+        systemPrompt: `You are a skilled novelist writing in the style of ${authorStyle}. Transform game events into compelling prose.`,
+        model: this.models.narrator,
+        role: 'novel-writer'
+      });
+
+      const parsed = result.parsed || {};
+
+      // Append chapter to novel.md
+      const novelPath = join(this.getStoryDir(), 'novel.md');
+      let novelContent = '';
+
+      if (existsSync(novelPath)) {
+        novelContent = readFileSync(novelPath, 'utf-8');
+      } else {
+        // Initialize novel with title
+        novelContent = `# ${this.seed}\n\n*Written in the style of ${authorStyle}*\n\n---\n\n`;
+      }
+
+      // Add the new chapter
+      const chapterTitle = parsed.chapterTitle || `Day ${dayNumber}`;
+      const chapterText = parsed.chapterText || 'The day passed uneventfully.';
+
+      novelContent += `## ${chapterTitle}\n\n${chapterText}\n\n---\n\n`;
+
+      writeFileSync(novelPath, novelContent);
+      console.log(`[Novel] Chapter "${chapterTitle}" written to novel.md`);
+
+      // Update summaries in world state if provided
+      if (parsed.historySummary) {
+        // Replace detailed history with summary
+        const dayHistoryStart = this.worldState.history.findIndex(h => h.includes(`Day ${dayNumber}`));
+        if (dayHistoryStart >= 0) {
+          // Keep summary of this day instead of detailed entries
+          this.worldState.history = [
+            ...this.worldState.history.slice(0, dayHistoryStart),
+            `Day ${dayNumber}: ${parsed.historySummary}`,
+            ...this.worldState.history.slice(dayHistoryStart).filter(h => !h.includes(`Day ${dayNumber}`))
+          ];
+        } else {
+          this.worldState.history.push(`Day ${dayNumber}: ${parsed.historySummary}`);
+        }
+      }
+
+      if (parsed.majorEventsSummary && Array.isArray(parsed.majorEventsSummary)) {
+        // Add summarized major events
+        for (const event of parsed.majorEventsSummary) {
+          if (!this.worldState.majorEvents.includes(event)) {
+            this.worldState.majorEvents.push(event);
+          }
+        }
+      }
+
+      // Log the novel generation
+      this.llmLog.push({
+        type: 'novel_chapter',
+        day: dayNumber,
+        author: authorStyle,
+        request: result.request,
+        response: result.response,
+        parsed: parsed,
+        elapsed: result.elapsed
+      });
+
+    } catch (error) {
+      console.error(`[Novel] Error generating chapter for day ${dayNumber}:`, error.message);
+    }
   }
 }

@@ -19,7 +19,10 @@ const storyViewer = document.getElementById('story-viewer');
 const storyViewerTitle = document.getElementById('story-viewer-title');
 const storyViewerBody = document.getElementById('story-viewer-body');
 const viewerCloseBtn = document.getElementById('viewer-close-btn');
-const modelSelect = document.getElementById('model-select');
+const modelDmSelect = document.getElementById('model-dm');
+const modelCharacterSelect = document.getElementById('model-character');
+const modelNarratorSelect = document.getElementById('model-narrator');
+const authorStyleInput = document.getElementById('author-style');
 const characterDisplay = document.getElementById('character-display');
 
 let currentTurn = 0;
@@ -36,46 +39,64 @@ async function loadModels() {
     availableModels = data.models;
     defaultModel = data.default;
 
-    modelSelect.innerHTML = '';
-    for (const [key, model] of Object.entries(availableModels)) {
-      const option = document.createElement('option');
-      option.value = key;
-      option.textContent = model.name;
-      option.title = model.description;
-      if (key === defaultModel) {
-        option.selected = true;
+    // Populate all three model selects
+    const selects = [modelDmSelect, modelCharacterSelect, modelNarratorSelect];
+    for (const select of selects) {
+      select.innerHTML = '';
+      for (const [key, model] of Object.entries(availableModels)) {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = model.name;
+        option.title = model.description + (model.context_length ? ` (${model.context_length} ctx)` : '');
+        if (key === defaultModel) {
+          option.selected = true;
+        }
+        select.appendChild(option);
       }
-      modelSelect.appendChild(option);
     }
   } catch (error) {
     console.error('Error loading models:', error);
-    modelSelect.innerHTML = '<option value="">Error loading models</option>';
+    const errorOption = '<option value="">Error loading models</option>';
+    modelDmSelect.innerHTML = errorOption;
+    modelCharacterSelect.innerHTML = errorOption;
+    modelNarratorSelect.innerHTML = errorOption;
   }
 }
 
+// Get current model selections
+function getModelSelections() {
+  return {
+    dm: modelDmSelect.value || defaultModel,
+    character: modelCharacterSelect.value || defaultModel,
+    narrator: modelNarratorSelect.value || defaultModel
+  };
+}
+
 // Change model for current game
-async function changeModel(model) {
+async function changeModels() {
   if (!currentStoryId) return;
 
   try {
-    const response = await fetch('/api/game/model', {
+    const models = getModelSelections();
+    const response = await fetch('/api/game/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model })
+      body: JSON.stringify({ models })
     });
 
     if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to change model');
+      throw new Error(data.error || 'Failed to change models');
     }
   } catch (error) {
-    console.error('Error changing model:', error);
+    console.error('Error changing models:', error);
   }
 }
 
-modelSelect.addEventListener('change', () => {
-  changeModel(modelSelect.value);
-});
+// Update models when any select changes
+modelDmSelect.addEventListener('change', changeModels);
+modelCharacterSelect.addEventListener('change', changeModels);
+modelNarratorSelect.addEventListener('change', changeModels);
 
 // Initialize models on page load
 loadModels();
@@ -649,6 +670,7 @@ function renderCharacterDisplay(characters) {
     thirst: 'Thirst',
     strength: 'Strength',
     dexterity: 'Dexterity',
+    intelligence: 'Intelligence',
     encumbrance: 'Encumbrance',
     sanity: 'Sanity',
     anger: 'Anger',
@@ -662,6 +684,7 @@ function renderCharacterDisplay(characters) {
     thirst: 0,
     strength: 50,
     dexterity: 50,
+    intelligence: 50,
     encumbrance: 0,
     sanity: 100,
     anger: 0,
@@ -674,9 +697,11 @@ function renderCharacterDisplay(characters) {
     const stats = char.stats || {};
     const prevStats = previousCharacterStats[char.id] || {};
 
-    html += `<div class="character-card">
+    const disposition = char.disposition || '';
+    const dispositionClass = disposition === 'hostile' ? 'hostile' : disposition === 'friendly' ? 'friendly' : '';
+    html += `<div class="character-card ${dispositionClass}">
       <h3>
-        <span>${char.name}</span>
+        <span>${char.name}${disposition ? ` <span class="disposition ${dispositionClass}">[${disposition}]</span>` : ''}</span>
         <span class="status">${char.status || 'Unknown'}</span>
       </h3>
       <div class="character-stats">`;
@@ -712,6 +737,28 @@ function renderCharacterDisplay(characters) {
       <span class="inventory-label">Inventory:</span>
       <span class="inventory-items">${inventory.length > 0 ? inventory.join(', ') : 'Nothing'}</span>
     </div>`;
+
+    // Add attitudes section - show towards all other characters
+    const attitudes = char.attitudes || {};
+    const otherCharacters = characters.filter(c => c.id !== char.id);
+    if (otherCharacters.length > 0) {
+      html += `<div class="character-attitudes">
+        <span class="attitudes-label">Attitudes:</span>`;
+      for (const targetChar of otherCharacters) {
+        const feelings = attitudes[targetChar.id] || {};
+        html += `<div class="attitude-row">
+          <span class="attitude-target">${targetChar.name}:</span>
+          <span class="attitude-feelings">`;
+        const feelingLabels = { love: 'L', anger: 'A', attraction: 'At', trust: 'T', fear: 'F' };
+        const defaultValues = { love: 50, anger: 0, attraction: 0, trust: 50, fear: 0 };
+        for (const [feeling, label] of Object.entries(feelingLabels)) {
+          const value = feelings[feeling] ?? defaultValues[feeling];
+          html += `<span class="attitude-item ${feeling}" title="${feeling}: ${value}%">${label}:${value}</span>`;
+        }
+        html += `</span></div>`;
+      }
+      html += `</div>`;
+    }
 
     html += `</div>`;
   }
@@ -794,13 +841,14 @@ async function startGame() {
   llmLog.innerHTML = '';
   currentTurn = 0;
 
-  const model = modelSelect.value || defaultModel;
+  const models = getModelSelections();
+  const authorStyle = authorStyleInput.value.trim() || null;
 
   try {
     const response = await fetch('/api/game', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seed, model })
+      body: JSON.stringify({ seed, models, authorStyle })
     });
 
     const data = await response.json();
@@ -823,6 +871,11 @@ async function startGame() {
     turnCounter.textContent = 'Turn: 0';
     timeDisplay.textContent = formatTime(data.worldState.time);
     dmControls.style.display = 'block';
+
+    // Update author style input with AI-chosen author if not specified by user
+    if (data.worldState.authorStyle) {
+      authorStyleInput.value = data.worldState.authorStyle;
+    }
   } catch (error) {
     alert('Error starting game: ' + error.message);
     console.error(error);
@@ -911,6 +964,8 @@ async function loadStoryList() {
           <div class="story-item-actions">
             <button class="story-view-btn" data-id="${story.id}">View</button>
             <button class="story-text-btn" data-id="${story.id}">Copy Text</button>
+            <button class="story-pdf-btn" data-id="${story.id}">PDF</button>
+            <button class="story-novel-btn" data-id="${story.id}" title="View/Download Novel">Novel</button>
             <button class="story-continue-btn" data-id="${story.id}">Continue</button>
           </div>
         </div>
@@ -930,6 +985,18 @@ async function loadStoryList() {
         copyStoryText(btn.dataset.id, btn);
       });
     });
+    storyList.querySelectorAll('.story-pdf-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        downloadPDF(btn.dataset.id, btn);
+      });
+    });
+    storyList.querySelectorAll('.story-novel-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showNovelMenu(btn.dataset.id, btn);
+      });
+    });
     storyList.querySelectorAll('.story-continue-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -947,13 +1014,13 @@ async function loadStory(storyId) {
   storyMenu.classList.add('hidden');
 
   const generateMissingImages = generateImagesCheckbox.checked;
-  const model = modelSelect.value || defaultModel;
+  const models = getModelSelections();
 
   try {
     const response = await fetch(`/api/stories/${storyId}/load`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ generateMissingImages, model })
+      body: JSON.stringify({ generateMissingImages, models })
     });
 
     const data = await response.json();
@@ -1026,9 +1093,29 @@ async function loadStory(storyId) {
     previousCharacterStats = {};  // Reset for loaded story - no change indicators
     renderCharacterDisplay(data.worldState.characters);
 
-    // Restore model selection
-    if (data.model && modelSelect.querySelector(`option[value="${data.model}"]`)) {
-      modelSelect.value = data.model;
+    // Restore model selections
+    if (data.models) {
+      if (data.models.dm && modelDmSelect.querySelector(`option[value="${data.models.dm}"]`)) {
+        modelDmSelect.value = data.models.dm;
+      }
+      if (data.models.character && modelCharacterSelect.querySelector(`option[value="${data.models.character}"]`)) {
+        modelCharacterSelect.value = data.models.character;
+      }
+      if (data.models.narrator && modelNarratorSelect.querySelector(`option[value="${data.models.narrator}"]`)) {
+        modelNarratorSelect.value = data.models.narrator;
+      }
+    } else if (data.model) {
+      // Backward compatibility: single model for all roles
+      if (modelDmSelect.querySelector(`option[value="${data.model}"]`)) {
+        modelDmSelect.value = data.model;
+        modelCharacterSelect.value = data.model;
+        modelNarratorSelect.value = data.model;
+      }
+    }
+
+    // Restore author style
+    if (data.worldState.authorStyle) {
+      authorStyleInput.value = data.worldState.authorStyle;
     }
 
     turnBtn.disabled = false;
@@ -1057,6 +1144,41 @@ menuCloseBtn.addEventListener('click', closeStoryMenu);
 storyMenu.addEventListener('click', (e) => {
   if (e.target === storyMenu) closeStoryMenu();
 });
+
+// Download story as PDF
+async function downloadPDF(storyId, btn) {
+  const originalText = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+
+  try {
+    const response = await fetch(`/api/stories/${storyId}/export/pdf`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to generate PDF');
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${storyId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    btn.textContent = 'Done!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  } catch (error) {
+    alert('Error downloading PDF: ' + error.message);
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
 
 // Copy story as plain text
 async function copyStoryText(storyId, btn) {
@@ -1163,6 +1285,153 @@ async function viewStory(storyId) {
   } finally {
     hideLoading();
   }
+}
+
+// Novel menu popup
+let activeNovelMenu = null;
+
+function showNovelMenu(storyId, button) {
+  // Remove any existing menu
+  if (activeNovelMenu) {
+    activeNovelMenu.remove();
+    activeNovelMenu = null;
+  }
+
+  const menu = document.createElement('div');
+  menu.className = 'novel-menu';
+  menu.innerHTML = `
+    <button class="novel-menu-item" data-action="view">View Novel</button>
+    <button class="novel-menu-item" data-action="copy">Copy to Clipboard</button>
+    <button class="novel-menu-item" data-action="download">Download</button>
+  `;
+
+  // Position menu near button
+  const rect = button.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.top = `${rect.bottom + 5}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.zIndex = '2000';
+
+  document.body.appendChild(menu);
+  activeNovelMenu = menu;
+
+  // Handle menu item clicks
+  menu.querySelectorAll('.novel-menu-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const action = item.dataset.action;
+      menu.remove();
+      activeNovelMenu = null;
+
+      switch (action) {
+        case 'view':
+          await viewNovel(storyId);
+          break;
+        case 'copy':
+          await copyNovel(storyId, button);
+          break;
+        case 'download':
+          downloadNovel(storyId);
+          break;
+      }
+    });
+  });
+
+  // Close menu when clicking outside
+  const closeMenu = (e) => {
+    if (!menu.contains(e.target) && e.target !== button) {
+      menu.remove();
+      activeNovelMenu = null;
+      document.removeEventListener('click', closeMenu);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+}
+
+async function viewNovel(storyId) {
+  storyMenu.classList.add('hidden');
+  showLoading();
+
+  try {
+    const response = await fetch(`/api/stories/${storyId}/novel`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to load novel');
+    }
+
+    // Render markdown content
+    const html = renderNovelMarkdown(data.content);
+    storyViewerBody.innerHTML = html;
+
+    // Extract title from first h1
+    const titleMatch = data.content.match(/^# (.+)$/m);
+    storyViewerTitle.textContent = titleMatch ? `${titleMatch[1]} (Novel)` : 'Novel';
+
+    storyViewer.classList.remove('hidden');
+  } catch (error) {
+    alert('Error loading novel: ' + error.message);
+    console.error(error);
+  } finally {
+    hideLoading();
+  }
+}
+
+async function copyNovel(storyId, button) {
+  try {
+    const response = await fetch(`/api/stories/${storyId}/novel`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to load novel');
+    }
+
+    await navigator.clipboard.writeText(data.content);
+
+    // Show feedback
+    const originalText = button.textContent;
+    button.textContent = 'Copied!';
+    button.disabled = true;
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 2000);
+  } catch (error) {
+    alert('Error copying novel: ' + error.message);
+    console.error(error);
+  }
+}
+
+function downloadNovel(storyId) {
+  // Trigger download via the API
+  window.location.href = `/api/stories/${storyId}/novel/download`;
+}
+
+function renderNovelMarkdown(markdown) {
+  // Simple markdown rendering for the novel
+  let html = '';
+  const lines = markdown.split('\n');
+
+  for (const line of lines) {
+    if (line.startsWith('# ')) {
+      html += `<h1>${escapeHtml(line.substring(2))}</h1>`;
+    } else if (line.startsWith('## ')) {
+      html += `<h2>${escapeHtml(line.substring(3))}</h2>`;
+    } else if (line.startsWith('---')) {
+      html += '<hr>';
+    } else if (line.startsWith('*') && line.endsWith('*') && !line.startsWith('**')) {
+      // Italics line (like the author style line)
+      html += `<p><em>${escapeHtml(line.slice(1, -1))}</em></p>`;
+    } else if (line.trim() === '') {
+      // Empty line
+      html += '';
+    } else {
+      // Regular paragraph
+      html += `<p>${escapeHtml(line)}</p>`;
+    }
+  }
+
+  return html;
 }
 
 function renderMarkdownStory(markdown, storyId) {

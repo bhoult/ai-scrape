@@ -14,18 +14,40 @@
         <button id="menu-btn" class="menu-btn">Saved Stories</button>
       </div>
       <div class="controls">
-        <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
-        <div class="buttons">
-          <select id="model-select" title="Select LLM model">
-            <option value="">Loading models...</option>
-          </select>
-          <button id="start-btn">Start Story</button>
-          <div class="turn-controls">
-            <button id="turn-btn" disabled>Next Turn</button>
-            <input type="number" id="turn-count" value="1" min="1" max="100" title="Number of turns">
+        <div class="controls-top">
+          <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
+          <div class="buttons">
+            <button id="start-btn">Start Story</button>
+            <div class="turn-controls">
+              <button id="turn-btn" disabled>Next Turn</button>
+              <input type="number" id="turn-count" value="1" min="1" max="100" title="Number of turns">
+            </div>
+            <span id="turn-counter">Turn: 0</span>
+            <span id="time-display"></span>
           </div>
-          <span id="turn-counter">Turn: 0</span>
-          <span id="time-display"></span>
+        </div>
+        <div class="options-row">
+          <div class="model-selects">
+            <div class="model-select-group">
+              <label for="model-dm">DM:</label>
+              <select id="model-dm" title="Model for Dungeon Master (world, resolution)">
+                <option value="">Loading...</option>
+              </select>
+            </div>
+            <div class="model-select-group">
+              <label for="model-character">Character:</label>
+              <select id="model-character" title="Model for character actions and dialogue">
+                <option value="">Loading...</option>
+              </select>
+            </div>
+            <div class="model-select-group">
+              <label for="model-narrator">Narrator:</label>
+              <select id="model-narrator" title="Model for novel chapter writing">
+                <option value="">Loading...</option>
+              </select>
+            </div>
+          </div>
+          <input type="text" id="author-style" placeholder="Author style (e.g., Stephen King, Hemingway)" title="Leave blank for AI to choose based on story">
         </div>
       </div>
       <div class="dm-controls" id="dm-controls" style="display: none;">

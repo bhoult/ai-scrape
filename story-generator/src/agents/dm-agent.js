@@ -11,8 +11,8 @@ export class DMAgent {
     this.model = model;
   }
 
-  async initializeWorld(seed) {
-    const prompt = dmInitPrompt(seed);
+  async initializeWorld(seed, authorStyle = null) {
+    const prompt = dmInitPrompt(seed, authorStyle);
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
@@ -35,8 +35,8 @@ export class DMAgent {
     };
   }
 
-  async resolveActions(worldState, characterActions, dmInstructions = null) {
-    const prompt = dmResolutionPrompt(worldState, characterActions, dmInstructions);
+  async resolveActions(worldState, characterActions, characterSpeech = [], dmInstructions = null) {
+    const prompt = dmResolutionPrompt(worldState, characterActions, characterSpeech, dmInstructions);
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
@@ -44,23 +44,25 @@ export class DMAgent {
       role: 'dm-resolve'
     });
 
+    const parsed = result.parsed || {};
+
     const log = {
       type: 'dm_resolution',
       request: result.request,
       response: result.response,
-      parsed: result.parsed,
+      parsed: parsed,
       elapsed: result.elapsed
     };
     this.llmLogs.push(log);
 
     return {
-      narrative: result.parsed.narrative,
-      sceneFocus: result.parsed.sceneFocus || 'characters',
-      sceneVisuals: result.parsed.sceneVisuals || {},
-      worldChanges: result.parsed.worldChanges,
-      worldSummary: result.parsed.worldSummary,
-      time: result.parsed.time,
-      arcUpdates: result.parsed.arcUpdates,
+      narrative: parsed.narrative || 'The scene continues...',
+      sceneFocus: parsed.sceneFocus || 'characters',
+      sceneVisuals: parsed.sceneVisuals || {},
+      worldChanges: parsed.worldChanges || {},
+      worldSummary: parsed.worldSummary || '',
+      time: parsed.time || worldState.time || { day: 1, hour: 8, minute: 0 },
+      arcUpdates: parsed.arcUpdates || {},
       llmLog: log
     };
   }
