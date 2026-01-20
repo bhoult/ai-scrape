@@ -149,6 +149,46 @@ export function getModelId(modelKey) {
   return getFireworksModel();
 }
 
+// Parse Server-Sent Events stream and accumulate content
+async function parseSSEStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let content = '';
+  let finishReason = null;
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            content += delta;
+          }
+          if (parsed.choices?.[0]?.finish_reason) {
+            finishReason = parsed.choices[0].finish_reason;
+          }
+        } catch (e) {
+          // Skip malformed JSON chunks
+        }
+      }
+    }
+  }
+
+  return { content, finishReason };
+}
+
 export async function queryLLM(prompt, options = {}) {
   const { systemPrompt = null, jsonMode = false, model = null, role = 'llm', turn = null } = options;
 
@@ -165,11 +205,15 @@ export async function queryLLM(prompt, options = {}) {
   // Get model-specific max_tokens based on context length
   const maxTokens = model ? getMaxTokensForModel(model) : DEFAULT_MAX_TOKENS;
 
+  // Use streaming for max_tokens > 4096 (Fireworks API requirement)
+  const useStreaming = maxTokens > 4096;
+
   const body = {
     model: modelId,
     messages,
     ...LLM_CONFIG,
-    max_tokens: maxTokens
+    max_tokens: maxTokens,
+    stream: useStreaming
   };
 
   if (jsonMode) {
@@ -184,7 +228,7 @@ export async function queryLLM(prompt, options = {}) {
     const response = await fetch(FIREWORKS_API_URL, {
       method: 'POST',
       headers: {
-        'Accept': 'application/json',
+        'Accept': useStreaming ? 'text/event-stream' : 'application/json',
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
@@ -220,15 +264,35 @@ export async function queryLLM(prompt, options = {}) {
       throw new Error(errorMsg);
     }
 
-    const data = await response.json();
+    let content, data, finishReason;
 
-    if (data.error) {
-      const errorMsg = `Fireworks API error: ${JSON.stringify(data.error)}`;
-      logModelError('API Error', model, { messages, ...body }, data, { max_tokens: maxTokens, ...LLM_CONFIG }, errorMsg, turn);
-      throw new Error(errorMsg);
+    if (useStreaming) {
+      // Parse streaming response
+      const streamResult = await parseSSEStream(response);
+      content = streamResult.content;
+      finishReason = streamResult.finishReason;
+      // Construct a response object similar to non-streaming for logging
+      data = {
+        choices: [{
+          message: { content },
+          finish_reason: finishReason
+        }],
+        model: modelId,
+        streamed: true
+      };
+    } else {
+      // Parse regular JSON response
+      data = await response.json();
+
+      if (data.error) {
+        const errorMsg = `Fireworks API error: ${JSON.stringify(data.error)}`;
+        logModelError('API Error', model, { messages, ...body }, data, { max_tokens: maxTokens, ...LLM_CONFIG }, errorMsg, turn);
+        throw new Error(errorMsg);
+      }
+
+      content = data.choices?.[0]?.message?.content;
+      finishReason = data.choices?.[0]?.finish_reason;
     }
-
-    const content = data.choices?.[0]?.message?.content;
 
     // Log the request and response
     logLLMCall({ messages, ...body }, data, model, elapsed, role, turn);
