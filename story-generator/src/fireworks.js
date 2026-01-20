@@ -264,6 +264,80 @@ function isContentRefusal(content) {
   return refusalPatterns.some(pattern => pattern.test(content));
 }
 
+// Try to repair common JSON malformations
+function tryRepairJSON(content) {
+  if (!content) return null;
+
+  try {
+    // First, try to find a valid JSON object in the content
+    const jsonStart = content.indexOf('{');
+    const jsonEnd = content.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      const extracted = content.slice(jsonStart, jsonEnd + 1);
+      try {
+        return JSON.parse(extracted);
+      } catch (e) {
+        // Continue to other repair attempts
+      }
+    }
+
+    // Try to fix common issues:
+    let repaired = content;
+
+    // Remove any text before the first { or after the last }
+    const startIdx = repaired.indexOf('{');
+    const endIdx = repaired.lastIndexOf('}');
+    if (startIdx !== -1 && endIdx > startIdx) {
+      repaired = repaired.slice(startIdx, endIdx + 1);
+    }
+
+    // Fix trailing commas before }
+    repaired = repaired.replace(/,\s*}/g, '}');
+    repaired = repaired.replace(/,\s*]/g, ']');
+
+    // Fix missing quotes around keys (common LLM error)
+    repaired = repaired.replace(/{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '{"$1":');
+    repaired = repaired.replace(/,\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, ',"$1":');
+
+    // Try parsing the repaired content
+    try {
+      return JSON.parse(repaired);
+    } catch (e) {
+      // One more attempt: try to extract key-value pairs for player action format
+      // Expected: {"thinking": "...", "action": "...", "dialogue": "..."}
+      const thinkingMatch = content.match(/"?thinking"?\s*[:=]\s*"([^"]*(?:\\.[^"]*)*)"/i);
+      const actionMatch = content.match(/"?action"?\s*[:=]\s*"([^"]*(?:\\.[^"]*)*)"/i);
+      const dialogueMatch = content.match(/"?dialogue"?\s*[:=]\s*"([^"]*(?:\\.[^"]*)*)"/i);
+
+      if (actionMatch) {
+        return {
+          thinking: thinkingMatch ? thinkingMatch[1] : '',
+          action: actionMatch[1],
+          dialogue: dialogueMatch ? dialogueMatch[1] : null
+        };
+      }
+
+      // Try DM resolution format
+      const narrativeMatch = content.match(/"?narrative"?\s*[:=]\s*"([^"]*(?:\\.[^"]*)*)"/i);
+      if (narrativeMatch) {
+        return {
+          narrative: narrativeMatch[1],
+          scenefocus: 'characters',
+          scenevisuals: {},
+          worldchanges: {},
+          worldsummary: narrativeMatch[1].slice(0, 100),
+          time: null,
+          arcupdates: {}
+        };
+      }
+    }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function queryLLMJSON(prompt, options = {}) {
   const originalModel = options.model;
   const turn = options.turn;
@@ -306,21 +380,62 @@ export async function queryLLMJSON(prompt, options = {}) {
   try {
     result.parsed = JSON.parse(result.content);
   } catch (e) {
+    // Try to extract JSON from code block
     const jsonMatch = result.content.match(/```json\n?([\s\S]*?)\n?```/);
     if (jsonMatch) {
       try {
         result.parsed = JSON.parse(jsonMatch[1]);
       } catch (e2) {
-        const errorMsg = `Failed to parse JSON from code block: ${e2.message}`;
-        logModelError('JSON Parse Error', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, errorMsg, turn);
-        throw new Error(errorMsg);
+        // Try repair on code block content
+        const repaired = tryRepairJSON(jsonMatch[1]);
+        if (repaired) {
+          result.parsed = repaired;
+          console.log(`[LLM] Repaired malformed JSON from code block`);
+        } else {
+          const errorMsg = `Failed to parse JSON from code block: ${e2.message}`;
+          logModelError('JSON Parse Error', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, errorMsg, turn);
+          throw new Error(errorMsg);
+        }
       }
     } else {
-      // Show more context for debugging truncation issues
-      const contentPreview = result.content?.slice(-500) || result.content;
-      const errorMsg = `Failed to parse JSON response (possibly truncated). Last 500 chars: ...${contentPreview}`;
-      logModelError('JSON Parse Error', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, errorMsg, turn);
-      throw new Error(errorMsg);
+      // Try to repair malformed JSON
+      const repaired = tryRepairJSON(result.content);
+      if (repaired) {
+        result.parsed = repaired;
+        console.log(`[LLM] Repaired malformed JSON response`);
+      } else {
+        // Log the error and retry with fallback model if not already using it
+        const contentPreview = result.content?.slice(-500) || result.content;
+        logModelError('JSON Parse Error', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, `Malformed JSON, attempting fallback. Preview: ...${contentPreview}`, turn);
+
+        // Retry with fallback model if this wasn't already a fallback attempt
+        if (originalModel !== FALLBACK_MODEL) {
+          console.log(`[LLM] JSON parse error from ${originalModel || 'default'}, retrying with ${FALLBACK_MODEL}...`);
+          const retryResult = await queryLLM(prompt, { ...options, model: FALLBACK_MODEL, jsonMode: true });
+
+          try {
+            result.parsed = JSON.parse(retryResult.content);
+            result.content = retryResult.content;
+            result.response = retryResult.response;
+            console.log(`[LLM] Fallback model returned valid JSON`);
+          } catch (retryError) {
+            const retryRepaired = tryRepairJSON(retryResult.content);
+            if (retryRepaired) {
+              result.parsed = retryRepaired;
+              result.content = retryResult.content;
+              result.response = retryResult.response;
+              console.log(`[LLM] Repaired fallback model JSON`);
+            } else {
+              const errorMsg = `Failed to parse JSON response (possibly truncated). Last 500 chars: ...${contentPreview}`;
+              logModelError('JSON Parse Error (Fallback)', FALLBACK_MODEL, retryResult.request, retryResult.content, { max_tokens: retryResult.request?.max_tokens }, errorMsg, turn);
+              throw new Error(errorMsg);
+            }
+          }
+        } else {
+          const errorMsg = `Failed to parse JSON response (possibly truncated). Last 500 chars: ...${contentPreview}`;
+          throw new Error(errorMsg);
+        }
+      }
     }
   }
 
