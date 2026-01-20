@@ -1,6 +1,19 @@
 import { queryLLMJSON } from '../fireworks.js';
 import { DM_SYSTEM_PROMPT, dmInitPrompt, dmResolutionPrompt } from '../prompts.js';
 
+// Normalize object keys to lowercase (handles LLMs returning UPPERCASE keys)
+function normalizeKeys(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(normalizeKeys);
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase();
+    normalized[lowerKey] = normalizeKeys(value);
+  }
+  return normalized;
+}
+
 export class DMAgent {
   constructor(model = null) {
     this.llmLogs = [];
@@ -20,17 +33,19 @@ export class DMAgent {
       role: 'dm-init'
     });
 
+    const parsed = normalizeKeys(result.parsed || {});
+
     const log = {
       type: 'dm_init',
       request: result.request,
       response: result.response,
-      parsed: result.parsed,
+      parsed: parsed,
       elapsed: result.elapsed
     };
     this.llmLogs.push(log);
 
     return {
-      data: result.parsed,
+      data: parsed,
       llmLog: log
     };
   }
@@ -44,7 +59,7 @@ export class DMAgent {
       role: 'dm-resolve'
     });
 
-    const parsed = result.parsed || {};
+    const parsed = normalizeKeys(result.parsed || {});
 
     const log = {
       type: 'dm_resolution',
