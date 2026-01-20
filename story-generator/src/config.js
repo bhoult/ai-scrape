@@ -148,12 +148,19 @@ export const LLM_CONFIG = {
 };
 
 // Default max_tokens if model context is unknown
-// Note: Fireworks API requires stream=true for max_tokens > 4096, so we cap at 4096
 export const DEFAULT_MAX_TOKENS = 4096;
 
+// Model-specific max_tokens overrides
+const MODEL_MAX_TOKENS = {
+  'llama-v3p3-70b-instruct': 16384,
+  'llama-v3p1-70b-instruct': 16384,
+  'llama-v3p1-405b-instruct': 16384
+};
+
 // Get max output tokens for a model
-// Fireworks API limitation: max_tokens > 4096 requires streaming, so cap at 4096
 export function getMaxTokensForModel(modelKey) {
-  // Fireworks non-streaming limit is 4096
-  return 4096;
+  if (modelKey && MODEL_MAX_TOKENS[modelKey]) {
+    return MODEL_MAX_TOKENS[modelKey];
+  }
+  return DEFAULT_MAX_TOKENS;
 }
