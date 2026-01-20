@@ -65,34 +65,15 @@ Examples:
 The victory conditions inform what map features to generate - ensure the path to victory exists but is treacherous.
 
 MAP GENERATION:
-Generate a map of the surrounding area covering approximately 2 days of travel distance (~20km radius from the starting point at position 0,0).
-
-Include 10-20 map features appropriate to the environment type. Distribute them:
-- 3-5 features within 5km (half day travel)
-- 4-6 features within 10km (one day travel)
-- 3-5 features within 20km (1.5 days travel)
-- 2-4 features beyond 20km (2+ days travel)
-
-Feature types to consider:
-- water_source: springs, ponds, rivers, wells - CRITICAL for survival (visibleFrom: 200-500m)
-- shelter: caves, buildings, rock formations (visibleFrom: 300-1000m)
-- landmark: hills, distinctive rocks, dead trees - for navigation (visibleFrom: 500-2000m)
-- terrain: forests, canyons, clearings (visibleFrom: 500-1500m)
-- resource: wreckage, abandoned sites, supplies (visibleFrom: 200-500m)
-- hazard: cliffs, quicksand, dangerous wildlife areas (visibleFrom: 100-300m)
-
-Each feature should have realistic visibility range based on its size and type.
-Position coordinates are in meters from origin (starting point at 0,0).
+Generate 5-8 map features within ~10km of start (position 0,0). Include at least one water source.
+Feature types: water_source, shelter, landmark, terrain, resource, hazard.
+Position in meters from origin. visibleFrom = how far away it can be seen (100-2000m based on size).
 
 Respond with a JSON object containing:
 {
   "narrative": "Opening paragraph describing the scene (2-3 sentences)",
   "sceneFocus": "characters|landscape|object|phenomenon - what should dominate the image",
-  "sceneVisuals": {
-    "characterAction": "What the characters are doing (only used if sceneFocus is 'characters'), e.g., 'Sarah kneels examining footprints while Mike scans the horizon'",
-    "objectDescription": "Description of a discovered object (only used if sceneFocus is 'object'), e.g., 'A rusted canteen half-buried in sand near weathered rocks'",
-    "phenomenonDescription": "Description of weather/wildlife/event (only used if sceneFocus is 'phenomenon'), e.g., 'A massive dust storm wall rolls across the desert horizon'"
-  },
+  "sceneVisuals": { "description": "Brief visual description for the scene image" },
   "time": {
     "day": 1,
     "hour": 8,
@@ -114,28 +95,9 @@ Respond with a JSON object containing:
   "narrativeArc": "Current phase of the story (e.g., 'Introduction - characters assess their situation')",
   "majorEvents": ["The plane crashed in the desert"],
   "tensions": ["Immediate need for water", "Unknown location", "Limited supplies"],
-  "discoveredObjects": [
-    {
-      "id": "obj_unique_id",
-      "name": "Object Name",
-      "description": "What it is and its state",
-      "position": { "x": 0, "y": 0 },
-      "status": "discovered"
-    }
-  ],
+  "discoveredObjects": [],
   "mapFeatures": [
-    {
-      "id": "map_feature_id",
-      "type": "water_source|shelter|hazard|landmark|resource|terrain",
-      "name": "Feature Name",
-      "description": "What it looks like from afar and up close",
-      "position": { "x": 5000, "y": 3000 },
-      "size": 100,
-      "visibleFrom": 500,
-      "resources": ["water", "shade"],
-      "hazards": ["wildlife"],
-      "shelter": true
-    }
+    { "id": "feat_1", "type": "water_source", "name": "Name", "description": "Brief description", "position": { "x": 3000, "y": 2000 }, "visibleFrom": 500 }
   ],
   "location": {
     "id": "location_id",
@@ -147,56 +109,25 @@ Respond with a JSON object containing:
   },
   "characters": [
     {
-      "_comment": "Characters can be humans, animals, aliens, robots, creatures, etc. Adapt fields appropriately.",
-      "id": "character_id",
-      "name": "Character Name",
+      "id": "char_firstname",
+      "name": "Full Name",
       "appearance": {
-        "gender": "male/female/none/unknown",
-        "age": "approximate age, maturity, or model version",
-        "height": "size description (short/average/tall or specific)",
-        "build": "body type (slim/muscular/bulky/sleek/quadruped/etc.)",
-        "hairColor": "hair/fur/feathers/scales color (or n/a)",
-        "hairLength": "length (or n/a for non-applicable)",
-        "hairStyle": "style (or n/a)",
-        "facialHair": "facial hair or features (or n/a)",
-        "eyeColor": "eye color or sensor type",
-        "skinTone": "skin/fur/scales/plating color and texture",
-        "face": "face/head shape or notable features",
-        "distinguishing": "scars, markings, damage, unique traits, species indicators"
+        "gender": "male/female/other",
+        "age": "number or description",
+        "build": "body type",
+        "hair": "color and style",
+        "eyes": "color",
+        "skin": "tone",
+        "distinguishing": "scars, markings, unique features"
       },
-      "clothing": "Current clothing/accessories (or 'none' for animals/creatures)",
-      "personality": "Key personality/behavioral traits",
-      "goals": "What this character wants (survival, hunting, protecting territory, etc.)",
+      "clothing": "Current clothing",
+      "personality": "Key traits (1 sentence)",
+      "goals": "What they want",
       "inventory": [],
       "status": "healthy",
-      "stats": {
-        "health": 100,
-        "stamina": 100,
-        "hunger": 0,
-        "thirst": 0,
-        "strength": 50,
-        "dexterity": 50,
-        "intelligence": 50,
-        "encumbrance": 0,
-        "sanity": 100,
-        "anger": 0,
-        "fear": 0
-      },
-      "position": {
-        "x": 0,
-        "y": 0,
-        "_comment": "Position in meters relative to scene center. Characters near each other (within 20m) can communicate."
-      },
-      "attitudes": {
-        "other_character_id": {
-          "love": 50,
-          "anger": 0,
-          "attraction": 0,
-          "trust": 50,
-          "fear": 0,
-          "_comment": "Feelings towards other characters (0-100). Initialize based on relationships in the seed."
-        }
-      }
+      "stats": { "health": 100, "stamina": 100, "hunger": 0, "thirst": 0, "strength": 50, "dexterity": 50, "intelligence": 50, "encumbrance": 0, "sanity": 100, "anger": 0, "fear": 0 },
+      "position": { "x": 0, "y": 0 },
+      "attitudes": { "other_char_id": { "love": 50, "anger": 0, "attraction": 0, "trust": 50, "fear": 0 } }
     }
   ],
   "worldSummary": "Brief summary of the current situation",
