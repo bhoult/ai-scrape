@@ -5,7 +5,10 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "test:unit": "node --test tests/normalize-keys.test.js tests/json-repair.test.js tests/world-state.test.js tests/narrative-data.test.js",
+    "test:integration": "node --test tests/llm-integration.test.js"
   },
   "dependencies": {
     "express": "^4.18.2",

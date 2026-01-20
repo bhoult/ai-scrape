@@ -14,6 +14,11 @@ export let DEFAULT_MODEL = null;
 
 // Fallback models if API fails
 const FALLBACK_MODELS = {
+  'minimax-m2.1': {
+    id: 'accounts/fireworks/models/minimax-m2.1',
+    name: 'MiniMax M2.1',
+    description: 'MiniMax model'
+  },
   'deepseek-v3': {
     id: 'accounts/fireworks/models/deepseek-v3',
     name: 'DeepSeek V3',
@@ -103,7 +108,7 @@ export async function fetchAvailableModels() {
     }
 
     // Set default model - prefer these in order if available
-    const preferredDefaults = ['deepseek-v3', 'deepseek-v3-0324', 'llama-v3p1-70b-instruct', 'qwen2p5-72b-instruct'];
+    const preferredDefaults = ['minimax-m2.1', 'deepseek-v3', 'deepseek-v3-0324', 'llama-v3p1-70b-instruct', 'qwen2p5-72b-instruct'];
     DEFAULT_MODEL = preferredDefaults.find(m => AVAILABLE_MODELS[m]) || Object.keys(AVAILABLE_MODELS)[0];
     FIREWORKS_MODEL = AVAILABLE_MODELS[DEFAULT_MODEL]?.id;
 
@@ -148,18 +153,12 @@ export const LLM_CONFIG = {
 };
 
 // Default max_tokens (streaming is used automatically for >4096)
-export const DEFAULT_MAX_TOKENS = 4096;
+export const DEFAULT_MAX_TOKENS = 16384;
 
-// Model-specific max_tokens overrides (streaming enabled automatically)
+// Model-specific max_tokens overrides (if a model needs different limits)
 const MODEL_MAX_TOKENS = {
-  'llama-v3p3-70b-instruct': 16384,
-  'llama-v3p1-70b-instruct': 16384,
-  'llama-v3p1-405b-instruct': 16384,
-  'minimax-m1': 16384,
-  'minimax-m2': 16384,
-  'deepseek-v3': 16384,
-  'deepseek-v3-0324': 16384,
-  'deepseek-r1': 16384
+  // All models now default to 16384 with streaming
+  // Add entries here only if a specific model needs a different limit
 };
 
 // Get max output tokens for a model

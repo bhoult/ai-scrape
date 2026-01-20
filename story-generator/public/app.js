@@ -23,6 +23,8 @@ const modelDmSelect = document.getElementById('model-dm');
 const modelCharacterSelect = document.getElementById('model-character');
 const modelNarratorSelect = document.getElementById('model-narrator');
 const authorStyleInput = document.getElementById('author-style');
+const dmAuthorStyleInput = document.getElementById('dm-author-style');
+const characterAuthorStyleInput = document.getElementById('character-author-style');
 const characterDisplay = document.getElementById('character-display');
 const writeChapterBtn = document.getElementById('write-chapter-btn');
 
@@ -98,6 +100,42 @@ async function changeModels() {
 modelDmSelect.addEventListener('change', changeModels);
 modelCharacterSelect.addEventListener('change', changeModels);
 modelNarratorSelect.addEventListener('change', changeModels);
+
+// Update author styles when changed during a game
+async function changeAuthorStyles() {
+  if (!currentStoryId) return;
+
+  try {
+    const authorStyles = {
+      authorStyle: authorStyleInput.value.trim() || null,
+      dmAuthorStyle: dmAuthorStyleInput.value.trim() || null,
+      characterAuthorStyle: characterAuthorStyleInput.value.trim() || null
+    };
+    const response = await fetch('/api/game/author-styles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authorStyles)
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to change author styles');
+    }
+  } catch (error) {
+    console.error('Error changing author styles:', error);
+  }
+}
+
+// Debounce author style changes to avoid too many requests
+let authorStyleTimeout = null;
+function debouncedChangeAuthorStyles() {
+  if (authorStyleTimeout) clearTimeout(authorStyleTimeout);
+  authorStyleTimeout = setTimeout(changeAuthorStyles, 500);
+}
+
+authorStyleInput.addEventListener('change', debouncedChangeAuthorStyles);
+dmAuthorStyleInput.addEventListener('change', debouncedChangeAuthorStyles);
+characterAuthorStyleInput.addEventListener('change', debouncedChangeAuthorStyles);
 
 // Initialize models on page load
 loadModels();
@@ -1059,12 +1097,14 @@ async function startGame() {
 
   const models = getModelSelections();
   const authorStyle = authorStyleInput.value.trim() || null;
+  const dmAuthorStyle = dmAuthorStyleInput.value.trim() || null;
+  const characterAuthorStyle = characterAuthorStyleInput.value.trim() || null;
 
   try {
     const response = await fetch('/api/game', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seed, models, authorStyle })
+      body: JSON.stringify({ seed, models, authorStyle, dmAuthorStyle, characterAuthorStyle })
     });
 
     const data = await response.json();
@@ -1089,9 +1129,15 @@ async function startGame() {
     timeDisplay.textContent = formatTime(data.worldState.time);
     dmControls.style.display = 'block';
 
-    // Update author style input with AI-chosen author if not specified by user
+    // Update author style inputs with values from world state
     if (data.worldState.authorStyle) {
       authorStyleInput.value = data.worldState.authorStyle;
+    }
+    if (data.worldState.dmAuthorStyle) {
+      dmAuthorStyleInput.value = data.worldState.dmAuthorStyle;
+    }
+    if (data.worldState.characterAuthorStyle) {
+      characterAuthorStyleInput.value = data.worldState.characterAuthorStyle;
     }
   } catch (error) {
     alert('Error starting game: ' + error.message);
@@ -1400,9 +1446,19 @@ async function loadStory(storyId) {
       }
     }
 
-    // Restore author style
+    // Restore author styles
     if (data.worldState.authorStyle) {
       authorStyleInput.value = data.worldState.authorStyle;
+    }
+    if (data.worldState.dmAuthorStyle) {
+      dmAuthorStyleInput.value = data.worldState.dmAuthorStyle;
+    } else {
+      dmAuthorStyleInput.value = '';
+    }
+    if (data.worldState.characterAuthorStyle) {
+      characterAuthorStyleInput.value = data.worldState.characterAuthorStyle;
+    } else {
+      characterAuthorStyleInput.value = '';
     }
 
     turnBtn.disabled = false;

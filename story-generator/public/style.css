@@ -337,22 +337,22 @@ button {
   border-color: #e94560;
 }
 
-#author-style {
-  padding: 0.5rem;
+.author-style-input {
+  padding: 0.4rem;
   border: 1px solid #333;
   border-radius: 6px;
   background: #16213e;
   color: #eee;
-  font-size: 14px;
-  width: 200px;
+  font-size: 12px;
+  width: 120px;
 }
 
-#author-style:focus {
+.author-style-input:focus {
   outline: none;
   border-color: #e94560;
 }
 
-#author-style::placeholder {
+.author-style-input::placeholder {
   color: #666;
 }
 

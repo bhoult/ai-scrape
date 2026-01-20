@@ -5,6 +5,9 @@ import {
   abilityStats,
   staminaRates,
   hydrationRates,
+  personalityTypes,
+  getPersonalityTypeNames,
+  generatePersonalityText,
   generateStatsBehaviorText,
   generateAttitudesBehaviorText,
   generateActiveStatsBehaviorText,
@@ -39,16 +42,20 @@ Your role:
 
 Always respond in the specified JSON format with a single action.`;
 
-export function dmInitPrompt(seed, authorStyle = null) {
+export function dmInitPrompt(seed, authorStyle = null, dmAuthorStyle = null) {
   const authorInstructions = authorStyle
     ? `\nAUTHOR STYLE: "${authorStyle}" - The novel version of this story will be written in this author's style.`
     : `\nAUTHOR STYLE: Not specified. Choose an author whose style would be appropriate for this type of story (e.g., Stephen King for horror, Hemingway for survival, Agatha Christie for mystery, etc.). Return your choice in the authorStyle field.`;
+
+  const dmStyleInstructions = dmAuthorStyle
+    ? `\nNARRATIVE STYLE: Write the opening narrative in the style of ${dmAuthorStyle}. Emulate their voice, sentence structure, pacing, and descriptive approach.`
+    : '';
 
   return `Parse the following story seed and create the initial world state. Extract characters, setting, situation, and the overall story goal. Determine an appropriate starting day and time for the story.
 
 SEED:
 ${seed}
-${authorInstructions}
+${authorInstructions}${dmStyleInstructions}
 
 VICTORY CONDITIONS (CRITICAL):
 Define how the characters can achieve victory. This should be:
@@ -128,6 +135,7 @@ Respond with a JSON object containing:
       },
       "clothing": "Current clothing",
       "personality": "Key traits (1 sentence)",
+      "personalityTypes": ["2-4 types from: ${getPersonalityTypeNames().join(', ')}"],
       "goals": "What they want",
       "inventory": [],
       "status": "healthy",
@@ -338,8 +346,9 @@ export function playerThinkTalkPrompt(character, worldState, recentHistory, prev
   }
 
   // Get contextual behavior guidance based on actual stat/attitude values
+  // Pass stats to suppress attraction behaviors when in critical physical state
   const activeStatEffects = generateActiveStatsBehaviorText(character.stats || {});
-  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames);
+  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames, undefined, character.stats);
 
   // Build stat effects section - only show if there are active effects
   const statEffectsSection = activeStatEffects
@@ -351,8 +360,19 @@ export function playerThinkTalkPrompt(character, worldState, recentHistory, prev
     ? `\nYour feelings towards others that should affect your interactions:\n${activeAttitudeEffects}`
     : '';
 
-  return `You are ${character.name}.
+  // Add character author style instruction if set
+  const characterStyleText = worldState.characterAuthorStyle
+    ? `\nRESPONSE STYLE: Express your character's thoughts, speech, and actions in the style of ${worldState.characterAuthorStyle}. Emulate their voice, internal monologue style, and dialogue patterns.\n`
+    : '';
 
+  // Generate personality types behavior guidance
+  const personalityText = generatePersonalityText(character.personalitytypes || character.personalityTypes);
+  const personalitySection = personalityText
+    ? `\nYOUR BASELINE PERSONALITY (always act according to these traits):\n${personalityText}\n`
+    : '';
+
+  return `You are ${character.name}.
+${characterStyleText}
 CURRENT TIME: ${formatTime(worldState.time)}
 
 YOUR CHARACTER:
@@ -365,7 +385,7 @@ YOUR CHARACTER:
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
-${statEffectsSection}
+${personalitySection}${statEffectsSection}
 ${attitudeEffectsSection}
 
 CURRENT SITUATION:
@@ -414,8 +434,9 @@ export function playerActionPrompt(character, worldState, recentHistory, nearbyD
   }
 
   // Get contextual behavior guidance based on actual stat/attitude values
+  // Pass stats to suppress attraction behaviors when in critical physical state
   const activeStatEffects = generateActiveStatsBehaviorText(character.stats || {});
-  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames);
+  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames, undefined, character.stats);
 
   // Build stat effects section - only show if there are active effects
   const statEffectsSection = activeStatEffects
@@ -427,8 +448,19 @@ export function playerActionPrompt(character, worldState, recentHistory, nearbyD
     ? `\nYour feelings that should affect interactions:\n${activeAttitudeEffects}`
     : '';
 
-  return `You are ${character.name}.
+  // Add character author style instruction if set
+  const characterStyleText = worldState.characterAuthorStyle
+    ? `\nRESPONSE STYLE: Express your character's thoughts, speech, and actions in the style of ${worldState.characterAuthorStyle}. Emulate their voice, internal monologue style, and dialogue patterns.\n`
+    : '';
 
+  // Generate personality types behavior guidance
+  const personalityText = generatePersonalityText(character.personalitytypes || character.personalityTypes);
+  const personalitySection = personalityText
+    ? `\nYOUR BASELINE PERSONALITY (always act according to these traits):\n${personalityText}\n`
+    : '';
+
+  return `You are ${character.name}.
+${characterStyleText}
 CURRENT TIME: ${formatTime(worldState.time)}
 
 YOUR CHARACTER:
@@ -441,7 +473,7 @@ YOUR CHARACTER:
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
-${statEffectsSection}
+${personalitySection}${statEffectsSection}
 ${attitudeEffectsSection}
 
 CURRENT SITUATION:
@@ -548,8 +580,13 @@ export function dmResolutionPrompt(worldState, characterActions, characterSpeech
     env.temperature
   ].filter(Boolean).join(', ') || 'Unknown';
 
-  return `Resolve the following character actions and describe what happens.
+  // Add author style instruction if set
+  const dmAuthorStyleText = worldState.dmAuthorStyle
+    ? `\nNARRATIVE STYLE: Write the narrative in the style of ${worldState.dmAuthorStyle}. Emulate their voice, sentence structure, pacing, and descriptive approach.\n`
+    : '';
 
+  return `Resolve the following character actions and describe what happens.
+${dmAuthorStyleText}
 CURRENT TIME: ${formatTime(worldState.time)}
 ENVIRONMENT: ${envText}
 
@@ -638,7 +675,7 @@ NEW CHARACTERS (max 7 total characters in story):
 - You can introduce new characters to advance the narrative
 - Characters can be ANY type: humans, animals, aliens, creatures, robots, monsters, spirits, etc.
 - Add them via newCharacters array in worldChanges
-- New characters need full details: id, name, appearance, clothing, personality, goals, inventory, status, stats, position, attitudes
+- New characters need full details: id, name, appearance, clothing, personality, personalityTypes, goals, inventory, status, stats, position, attitudes
 - Dispositions: friendly (allies, pets, helpers), neutral (wildlife, strangers), hostile (predators, enemies, monsters)
 - Introduce new characters when narratively appropriate (encounters, discoveries, ambushes, summons, etc.)
 - For non-humans, adapt appearance fields appropriately (e.g., fur color instead of hair, scales, metal plating, etc.)
@@ -766,6 +803,7 @@ Respond with JSON:
         },
         "clothing": "what they wear (or 'none' for animals/creatures)",
         "personality": "key behavioral traits",
+        "personalityTypes": ["2-4 from: positive, negative, stoic, cheerful, depressed, outgoing, introvert, extrovert, flirty, peaceful, violent, fearful, brave, logical, emotional, reasonable, impulsive, spiritual, pragmatic, idealistic, cynical, upbeat, calm, nervous, confident, nurturing, selfish, loyal, manipulative, leader, follower, independent"],
         "goals": "what this character wants (survival, hunting, protecting, etc.)",
         "inventory": ["items", "they", "carry"],
         "status": "healthy/injured/hostile/hunting/etc",

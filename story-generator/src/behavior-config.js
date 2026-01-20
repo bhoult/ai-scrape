@@ -1,6 +1,77 @@
 // Behavioral configuration for character stats and attitudes
 // This file defines how stat values and attitude levels affect character behavior
 
+// Personality types - baseline behavioral tendencies for characters
+// Each character can have multiple personality types that guide their behavior
+export const personalityTypes = {
+  // Emotional disposition
+  positive: { description: 'Optimistic, sees the good in situations, encouraging' },
+  negative: { description: 'Pessimistic, focuses on problems and risks, critical' },
+  cheerful: { description: 'Happy, lighthearted, tries to lift others\' spirits' },
+  depressed: { description: 'Melancholic, low energy, struggles to find hope' },
+  stoic: { description: 'Emotionally reserved, endures hardship without complaint' },
+
+  // Social tendencies
+  outgoing: { description: 'Socially confident, initiates conversations, gregarious' },
+  introvert: { description: 'Prefers solitude or small groups, needs alone time to recharge' },
+  extrovert: { description: 'Energized by social interaction, talkative, expressive' },
+  flirty: { description: 'Playfully romantic, enjoys flirtation, charming' },
+
+  // Temperament
+  peaceful: { description: 'Avoids conflict, seeks harmony, diplomatic' },
+  violent: { description: 'Quick to aggression, solves problems with force' },
+  fearful: { description: 'Anxious, cautious, easily frightened, avoids danger' },
+  brave: { description: 'Courageous, faces danger head-on, protective' },
+
+  // Cognitive style
+  logical: { description: 'Analytical, prioritizes reason over emotion, methodical' },
+  emotional: { description: 'Led by feelings, empathetic, intuitive' },
+  reasonable: { description: 'Fair-minded, willing to compromise, considers all sides' },
+  impulsive: { description: 'Acts without thinking, spontaneous, reactive' },
+
+  // Worldview
+  spiritual: { description: 'Believes in higher powers or meaning, may pray or meditate' },
+  pragmatic: { description: 'Focused on practical solutions, results-oriented' },
+  idealistic: { description: 'Driven by principles and ideals, sometimes unrealistic' },
+  cynical: { description: 'Distrustful of others\' motives, expects the worst' },
+
+  // Demeanor
+  upbeat: { description: 'Energetic, enthusiastic, maintains high spirits' },
+  calm: { description: 'Composed, doesn\'t panic easily, steady under pressure' },
+  nervous: { description: 'Easily stressed, fidgety, worries frequently' },
+  confident: { description: 'Self-assured, believes in own abilities' },
+
+  // Interpersonal
+  nurturing: { description: 'Caring, protective of others, maternal/paternal instinct' },
+  selfish: { description: 'Prioritizes own needs, reluctant to sacrifice for others' },
+  loyal: { description: 'Devoted to allies, values commitment and trust' },
+  manipulative: { description: 'Uses others to achieve goals, deceptive when useful' },
+
+  // Leadership
+  leader: { description: 'Takes charge, makes decisions for the group, authoritative' },
+  follower: { description: 'Prefers to follow others\' lead, supportive role' },
+  independent: { description: 'Self-reliant, prefers to work alone, autonomous' }
+};
+
+// Get list of valid personality type names
+export function getPersonalityTypeNames() {
+  return Object.keys(personalityTypes);
+}
+
+// Generate personality behavior text for character prompts
+export function generatePersonalityText(personalityTypesList) {
+  if (!Array.isArray(personalityTypesList) || personalityTypesList.length === 0) {
+    return null;
+  }
+
+  const lines = personalityTypesList
+    .filter(type => personalityTypes[type])
+    .map(type => `- ${type.charAt(0).toUpperCase() + type.slice(1)}: ${personalityTypes[type].description}`);
+
+  if (lines.length === 0) return null;
+  return lines.join('\n');
+}
+
 // Stats behavioral thresholds - affects character's own behavior
 // Each stat has thresholds with min/max ranges and behavioral descriptions
 export const statsBehavior = {
@@ -37,8 +108,8 @@ export const statsBehavior = {
 // These define how a character behaves toward another based on attitude values
 export const attitudesBehavior = {
   attraction: [
-    { min: 80, max: 100, label: 'INTENSE DESIRE', behavior: 'Actively try to initiate sex, remove clothing, make suggestive comments, physical touching. Include explicit content.' },
-    { min: 60, max: 79, label: 'Attracted', behavior: 'Seek physical proximity, flirtatious behavior, protective of them, may act foolishly to impress.' },
+    { min: 80, max: 100, label: 'INTENSE DESIRE', behavior: 'Actively try to initiate sex, remove clothing, make suggestive comments, physical touching. Include explicit content.', suppressedWhenDying: true },
+    { min: 60, max: 79, label: 'Attracted', behavior: 'Seek physical proximity, flirtatious behavior, protective of them, may act foolishly to impress.', suppressedWhenDying: true },
     { min: 40, max: 59, label: 'Interested', behavior: 'Friendly interest, enjoy their company, notice their appearance.' }
   ],
   love: [
@@ -256,9 +327,28 @@ export function generateActiveStatsBehaviorText(stats, config = statsBehavior) {
   return lines.join('\n');
 }
 
+// Check if character is in a dying/critical state where sexual interest is suppressed
+export function isInCriticalState(stats) {
+  if (!stats) return false;
+  const health = stats.health ?? 100;
+  const hunger = stats.hunger ?? 0;
+  const thirst = stats.thirst ?? 0;
+  const stamina = stats.stamina ?? 100;
+
+  // Critical conditions that suppress sexual interest
+  return (
+    health <= 30 ||      // Near death / critically injured
+    hunger >= 70 ||      // Starving
+    thirst >= 70 ||      // Dying of thirst
+    stamina <= 20        // Completely exhausted
+  );
+}
+
 // Generate contextual attitudes behavior based on actual attitude values towards specific characters
-export function getActiveAttitudeEffects(attitudes, characterNames = {}, config = attitudesBehavior) {
+// stats parameter is optional - if provided, will suppress attraction behaviors when in critical state
+export function getActiveAttitudeEffects(attitudes, characterNames = {}, config = attitudesBehavior, stats = null) {
   const effects = [];
+  const inCriticalState = stats ? isInCriticalState(stats) : false;
 
   for (const [targetId, feelings] of Object.entries(attitudes || {})) {
     const targetName = characterNames[targetId] || targetId;
@@ -270,12 +360,23 @@ export function getActiveAttitudeEffects(attitudes, characterNames = {}, config 
 
       for (const t of thresholds) {
         if (value >= t.min && value <= t.max) {
-          targetEffects.push({
-            attitude: attitude.charAt(0).toUpperCase() + attitude.slice(1),
-            value,
-            label: t.label,
-            behavior: t.behavior
-          });
+          // Skip attraction behaviors when in critical state
+          if (t.suppressedWhenDying && inCriticalState) {
+            // Replace with survival-focused behavior
+            targetEffects.push({
+              attitude: attitude.charAt(0).toUpperCase() + attitude.slice(1),
+              value,
+              label: t.label + ' (suppressed)',
+              behavior: 'Physical survival takes priority over romantic/sexual interest. Focus on immediate needs first.'
+            });
+          } else {
+            targetEffects.push({
+              attitude: attitude.charAt(0).toUpperCase() + attitude.slice(1),
+              value,
+              label: t.label,
+              behavior: t.behavior
+            });
+          }
           break;
         }
       }
@@ -294,8 +395,9 @@ export function getActiveAttitudeEffects(attitudes, characterNames = {}, config 
 }
 
 // Generate contextual attitudes text based on character's actual attitudes
-export function generateActiveAttitudesBehaviorText(attitudes, characterNames = {}, config = attitudesBehavior) {
-  const effects = getActiveAttitudeEffects(attitudes, characterNames, config);
+// stats parameter is optional - if provided, will suppress attraction behaviors when in critical state
+export function generateActiveAttitudesBehaviorText(attitudes, characterNames = {}, config = attitudesBehavior, stats = null) {
+  const effects = getActiveAttitudeEffects(attitudes, characterNames, config, stats);
   if (effects.length === 0) {
     return null; // No notable attitude effects
   }

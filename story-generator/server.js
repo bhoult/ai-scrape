@@ -118,7 +118,7 @@ app.post('/api/stories/:id/load', async (req, res) => {
 
 app.post('/api/game', async (req, res) => {
   try {
-    const { seed, models: roleModels, authorStyle } = req.body;
+    const { seed, models: roleModels, authorStyle, dmAuthorStyle, characterAuthorStyle } = req.body;
     if (!seed) {
       return res.status(400).json({ error: 'Seed is required' });
     }
@@ -127,7 +127,7 @@ app.post('/api/game', async (req, res) => {
     // Use provided role models or fall back to default for all
     const models = roleModels || { dm: defaultModel, character: defaultModel, narrator: defaultModel };
     gameEngine = new GameEngine(models);
-    const result = await gameEngine.initializeFromSeed(seed, authorStyle || null);
+    const result = await gameEngine.initializeFromSeed(seed, authorStyle || null, dmAuthorStyle || null, characterAuthorStyle || null);
 
     res.json({
       success: true,
@@ -264,6 +264,22 @@ app.post('/api/game/generate-novel', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error generating novel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update author styles for current game
+app.post('/api/game/author-styles', (req, res) => {
+  try {
+    if (!gameEngine) {
+      return res.status(400).json({ error: 'No game in progress' });
+    }
+
+    const { authorStyle, dmAuthorStyle, characterAuthorStyle } = req.body;
+    gameEngine.setAuthorStyles({ authorStyle, dmAuthorStyle, characterAuthorStyle });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error setting author styles:', error);
     res.status(500).json({ error: error.message });
   }
 });

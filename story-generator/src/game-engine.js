@@ -94,6 +94,20 @@ export class GameEngine {
     this.setModels(model);
   }
 
+  setAuthorStyles({ authorStyle, dmAuthorStyle, characterAuthorStyle }) {
+    if (authorStyle !== undefined) {
+      this.worldState.authorStyle = authorStyle;
+    }
+    if (dmAuthorStyle !== undefined) {
+      this.worldState.dmAuthorStyle = dmAuthorStyle;
+    }
+    if (characterAuthorStyle !== undefined) {
+      this.worldState.characterAuthorStyle = characterAuthorStyle;
+    }
+    // Save the updated state
+    this.saveStory();
+  }
+
   generateStoryId(seed) {
     // Create ID from first 50 chars of seed, sanitized
     const sanitized = seed
@@ -474,6 +488,89 @@ export class GameEngine {
     return `Day ${time.day}, ${hour}:${minute}`;
   }
 
+  // Process intimacy effects - reduce attraction by 1/3 after sex
+  processIntimacyEffects(narrative) {
+    if (!narrative) return;
+
+    // Keywords indicating sexual activity
+    const intimacyKeywords = [
+      'make love', 'made love', 'making love',
+      'have sex', 'had sex', 'having sex',
+      'sleep together', 'slept together', 'sleeping together',
+      'intimate', 'intimacy', 'intercourse',
+      'consummated', 'coupled', 'coupling',
+      'passionate night', 'spent the night together',
+      'bodies intertwined', 'flesh against flesh'
+    ];
+
+    const narrativeLower = narrative.toLowerCase();
+    const hasIntimacyKeyword = intimacyKeywords.some(keyword => narrativeLower.includes(keyword));
+
+    if (!hasIntimacyKeyword) return;
+
+    // Find characters who are nude and close to each other (within 2 meters)
+    const nudeCharacters = this.worldState.characters.filter(c => {
+      const clothing = (c.clothing || '').toLowerCase();
+      return clothing === 'nude' || clothing === 'naked' || clothing.includes('undressed') || clothing.includes('nothing');
+    });
+
+    if (nudeCharacters.length < 2) return;
+
+    // Check which nude characters are close to each other
+    const involvedPairs = [];
+    for (let i = 0; i < nudeCharacters.length; i++) {
+      for (let j = i + 1; j < nudeCharacters.length; j++) {
+        const char1 = nudeCharacters[i];
+        const char2 = nudeCharacters[j];
+        const distance = this.worldState.getDistance(char1.position, char2.position);
+        // Characters within 2 meters and both nude = likely intimate
+        if (distance <= 2) {
+          involvedPairs.push([char1, char2]);
+        }
+      }
+    }
+
+    // Also check if narrative mentions specific character names together with intimacy
+    for (let i = 0; i < this.worldState.characters.length; i++) {
+      for (let j = i + 1; j < this.worldState.characters.length; j++) {
+        const char1 = this.worldState.characters[i];
+        const char2 = this.worldState.characters[j];
+        const name1 = char1.name.toLowerCase();
+        const name2 = char2.name.toLowerCase();
+
+        // Check if both names appear near intimacy keywords
+        if (narrativeLower.includes(name1) && narrativeLower.includes(name2)) {
+          // Already in pairs?
+          const alreadyPaired = involvedPairs.some(
+            ([a, b]) => (a.id === char1.id && b.id === char2.id) || (a.id === char2.id && b.id === char1.id)
+          );
+          if (!alreadyPaired) {
+            involvedPairs.push([char1, char2]);
+          }
+        }
+      }
+    }
+
+    // Reduce attraction by 1/3 for involved pairs
+    for (const [char1, char2] of involvedPairs) {
+      // Reduce char1's attraction to char2
+      if (char1.attitudes && char1.attitudes[char2.id]) {
+        const oldAttraction = char1.attitudes[char2.id].attraction || 0;
+        const newAttraction = Math.round(oldAttraction * 2 / 3);
+        char1.attitudes[char2.id].attraction = newAttraction;
+        console.log(`[Intimacy] ${char1.name}'s attraction to ${char2.name} reduced: ${oldAttraction} -> ${newAttraction}`);
+      }
+
+      // Reduce char2's attraction to char1
+      if (char2.attitudes && char2.attitudes[char1.id]) {
+        const oldAttraction = char2.attitudes[char1.id].attraction || 0;
+        const newAttraction = Math.round(oldAttraction * 2 / 3);
+        char2.attitudes[char1.id].attraction = newAttraction;
+        console.log(`[Intimacy] ${char2.name}'s attraction to ${char1.name} reduced: ${oldAttraction} -> ${newAttraction}`);
+      }
+    }
+  }
+
   // Process automatic status effects based on extreme stat values
   processStatEffects() {
     for (const char of this.worldState.characters) {
@@ -681,17 +778,27 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
       writeFileSync(turnFile, JSON.stringify(snapshot, null, 2));
     }
 
-    // Save current state JSON (without turnSnapshots)
+    // Save narrative.json (storyContent, history, sceneDescriptions)
+    const narrativePath = join(storyDir, 'narrative.json');
+    const narrativeData = {
+      storyContent: this.storyContent,
+      history: this.worldState.history,
+      sceneDescriptions: this.sceneDescriptions
+    };
+    writeFileSync(narrativePath, JSON.stringify(narrativeData, null, 2));
+
+    // Save current state JSON (without turnSnapshots, storyContent, history, sceneDescriptions)
     const jsonPath = join(storyDir, 'state.json');
+    const worldStateSnapshot = this.worldState.getStateSnapshot();
+    // Remove history from state.json since it's in narrative.json
+    delete worldStateSnapshot.history;
     const stateData = {
       seed: this.seed,
       storyId: this.storyId,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
       models: this.models,
-      worldState: this.worldState.getStateSnapshot(),
-      storyContent: this.storyContent,
-      sceneDescriptions: this.sceneDescriptions,
+      worldState: worldStateSnapshot,
       currentDay: this.currentDay,
       dayEvents: this.dayEvents,
       lastNovelTurn: this.lastNovelTurn
@@ -746,8 +853,21 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     this.seed = data.seed;
     this.storyId = data.storyId;
     this.createdAt = data.createdAt;
-    this.storyContent = data.storyContent || [];
-    this.sceneDescriptions = Array.isArray(data.sceneDescriptions) ? data.sceneDescriptions : [];
+
+    // Load narrative data from narrative.json (or fall back to state.json for older stories)
+    const narrativePath = join(storyDir, 'narrative.json');
+    if (existsSync(narrativePath)) {
+      const narrativeData = JSON.parse(readFileSync(narrativePath, 'utf-8'));
+      this.storyContent = narrativeData.storyContent || [];
+      this.sceneDescriptions = Array.isArray(narrativeData.sceneDescriptions) ? narrativeData.sceneDescriptions : [];
+      // History will be restored to worldState below
+      this._loadedHistory = narrativeData.history || [];
+    } else {
+      // Backward compatibility: load from state.json
+      this.storyContent = data.storyContent || [];
+      this.sceneDescriptions = Array.isArray(data.sceneDescriptions) ? data.sceneDescriptions : [];
+      this._loadedHistory = null; // Will use data.worldState.history
+    }
 
     // Set logs directory for this story
     setLogsDir(this.getLogsDir());
@@ -779,7 +899,9 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     this.worldState = new WorldState();
     this.worldState.turnNumber = data.worldState.turnNumber || 0;
     this.worldState.summary = data.worldState.summary || '';
-    this.worldState.history = data.worldState.history || [];
+    // History comes from narrative.json (or state.json for older stories)
+    this.worldState.history = this._loadedHistory || data.worldState.history || [];
+    delete this._loadedHistory; // Clean up temporary property
     this.worldState.time = data.worldState.time || { day: 1, hour: 8, minute: 0 };
     this.worldState.environment = data.worldState.environment || {
       type: '', terrain: '', lighting: '', weather: '', temperature: ''
@@ -831,6 +953,8 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     // Restore author style for novel generation
     this.worldState.authorStyle = data.worldState.authorStyle || null;
+    this.worldState.dmAuthorStyle = data.worldState.dmAuthorStyle || null;
+    this.worldState.characterAuthorStyle = data.worldState.characterAuthorStyle || null;
 
     // Restore day tracking for novel generation
     this.currentDay = data.currentDay || this.worldState.time?.day || 1;
@@ -1128,7 +1252,7 @@ Respond with ONLY a JSON object:
     });
   }
 
-  async initializeFromSeed(seed, authorStyle = null) {
+  async initializeFromSeed(seed, authorStyle = null, dmAuthorStyle = null, characterAuthorStyle = null) {
     this.worldState = new WorldState();
     this.dmAgent = new DMAgent(this.models.dm);
     this.playerAgents = [];
@@ -1141,10 +1265,18 @@ Respond with ONLY a JSON object:
     // Set logs directory for this story
     setLogsDir(this.getLogsDir());
 
-    const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle);
+    const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle, dmAuthorStyle);
     this.llmLog.push(llmLog);
 
     this.worldState.initialize(data);
+
+    // Set author styles (these can also be changed later via worldState)
+    if (dmAuthorStyle) {
+      this.worldState.dmAuthorStyle = dmAuthorStyle;
+    }
+    if (characterAuthorStyle) {
+      this.worldState.characterAuthorStyle = characterAuthorStyle;
+    }
 
     for (const character of data.characters) {
       this.playerAgents.push(new PlayerAgent(character, this.models.character));
@@ -1377,6 +1509,9 @@ Respond with ONLY a JSON object:
       // Use lowercase key to match applyChanges expectations
       this.worldState.applyChanges({ characterupdates: verifiedUpdates });
     }
+
+    // Process intimacy effects - reduce attraction after sex
+    this.processIntimacyEffects(resolution.narrative);
 
     // Process stat-based status effects
     this.processStatEffects();

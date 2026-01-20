@@ -32,8 +32,10 @@ export class WorldState {
     // Story completion tracking
     this.storyComplete = false;    // Whether the story has ended
     this.storyEnding = null;       // { type: 'victory'|'defeat'|'other', summary: 'description' }
-    // Author style for novel generation
-    this.authorStyle = null;       // Author whose style to emulate (e.g., "Stephen King", "Hemingway")
+    // Author styles
+    this.authorStyle = null;       // Author whose style to emulate for novel generation (e.g., "Stephen King", "Hemingway")
+    this.dmAuthorStyle = null;     // Author style for DM narrative responses (blank = neutral style)
+    this.characterAuthorStyle = null; // Author style for character AI responses (blank = neutral style)
   }
 
   initialize(dmResponse) {
@@ -244,6 +246,7 @@ export class WorldState {
           appearance: newChar.appearance || {},
           clothing: newChar.clothing || 'unknown',
           personality: newChar.personality || 'unknown',
+          personalitytypes: Array.isArray(newChar.personalitytypes) ? newChar.personalitytypes : [],
           goals: newChar.goals || 'unknown',
           inventory: Array.isArray(newChar.inventory) ? newChar.inventory : [],
           status: newChar.status || 'healthy',
@@ -344,7 +347,9 @@ export class WorldState {
       tensions: this.tensions,
       storyComplete: this.storyComplete,
       storyEnding: this.storyEnding,
-      authorStyle: this.authorStyle
+      authorStyle: this.authorStyle,
+      dmAuthorStyle: this.dmAuthorStyle,
+      characterAuthorStyle: this.characterAuthorStyle
     }));
   }
 
