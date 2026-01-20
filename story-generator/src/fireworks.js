@@ -160,14 +160,50 @@ export async function queryLLM(prompt, options = {}) {
   }
 }
 
+// Fallback model when primary model refuses content
+const FALLBACK_MODEL = 'llama-v3p3-70b-instruct';
+
+// Check if response indicates content refusal
+function isContentRefusal(content) {
+  if (!content || content.length < 50) return true;
+
+  const refusalPatterns = [
+    /i('m| am) (unable|not able) to/i,
+    /i can('t|not) (create|generate|write|produce|help with)/i,
+    /i (cannot|can't) (assist|help)/i,
+    /against my (guidelines|policies|programming)/i,
+    /i apologize,? but/i,
+    /i('m| am) sorry,? (but |i )/i,
+    /this (request|content) (violates|goes against)/i,
+    /i('m| am) not (able|going) to/i,
+    /as an ai/i
+  ];
+
+  return refusalPatterns.some(pattern => pattern.test(content));
+}
+
 export async function queryLLMJSON(prompt, options = {}) {
-  const result = await queryLLM(prompt, { ...options, jsonMode: true });
+  const originalModel = options.model;
+  let result = await queryLLM(prompt, { ...options, jsonMode: true });
 
   // Check if response was truncated
   const finishReason = result.response?.choices?.[0]?.finish_reason;
   if (finishReason === 'length') {
     const truncatedPreview = result.content?.slice(-200) || '';
     throw new Error(`Response truncated (hit max_tokens). Last 200 chars: ...${truncatedPreview}`);
+  }
+
+  // Check for content refusal and retry with fallback model
+  if (isContentRefusal(result.content) && originalModel !== FALLBACK_MODEL) {
+    console.log(`[LLM] Content refusal detected from ${originalModel || 'default'}, retrying with ${FALLBACK_MODEL}...`);
+    result = await queryLLM(prompt, { ...options, model: FALLBACK_MODEL, jsonMode: true });
+
+    // Check truncation on retry
+    const retryFinishReason = result.response?.choices?.[0]?.finish_reason;
+    if (retryFinishReason === 'length') {
+      const truncatedPreview = result.content?.slice(-200) || '';
+      throw new Error(`Response truncated (hit max_tokens). Last 200 chars: ...${truncatedPreview}`);
+    }
   }
 
   try {
