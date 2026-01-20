@@ -18,7 +18,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function logLLMCall(request, response, modelKey, elapsed, role = 'llm') {
+function logLLMCall(request, response, modelKey, elapsed, role = 'llm', turn = null) {
   if (!currentLogsDir) return;
 
   try {
@@ -26,11 +26,13 @@ function logLLMCall(request, response, modelKey, elapsed, role = 'llm') {
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const modelName = modelKey || 'default';
-    const filename = `${timestamp}_${role}_${modelName}.json`;
+    const turnStr = turn !== null ? `turn${String(turn).padStart(3, '0')}_` : '';
+    const filename = `${timestamp}_${turnStr}${role}_${modelName}.json`;
     const filepath = join(currentLogsDir, filename);
 
     const logData = {
       timestamp: new Date().toISOString(),
+      turn,
       role,
       model: modelKey,
       elapsed,
@@ -44,18 +46,20 @@ function logLLMCall(request, response, modelKey, elapsed, role = 'llm') {
   }
 }
 
-export function logImagePrompt(prompt, metadata, modelKey = 'z-image-turbo') {
+export function logImagePrompt(prompt, metadata, modelKey = 'z-image-turbo', turn = null) {
   if (!currentLogsDir) return;
 
   try {
     mkdirSync(currentLogsDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${timestamp}_image_${modelKey}.json`;
+    const turnStr = turn !== null ? `turn${String(turn).padStart(3, '0')}_` : '';
+    const filename = `${timestamp}_${turnStr}image_${modelKey}.json`;
     const filepath = join(currentLogsDir, filename);
 
     const logData = {
       timestamp: new Date().toISOString(),
+      turn,
       type: 'image',
       model: modelKey,
       prompt,
@@ -77,7 +81,7 @@ export function getModelId(modelKey) {
 }
 
 export async function queryLLM(prompt, options = {}) {
-  const { systemPrompt = null, jsonMode = false, model = null, role = 'llm' } = options;
+  const { systemPrompt = null, jsonMode = false, model = null, role = 'llm', turn = null } = options;
 
   const apiKey = getApiKey();
   const messages = [];
@@ -149,7 +153,7 @@ export async function queryLLM(prompt, options = {}) {
     const content = data.choices?.[0]?.message?.content;
 
     // Log the request and response
-    logLLMCall({ messages, ...body }, data, model, elapsed, role);
+    logLLMCall({ messages, ...body }, data, model, elapsed, role, turn);
 
     return {
       content,

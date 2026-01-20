@@ -30,7 +30,8 @@ export class DMAgent {
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
       model: this.model,
-      role: 'dm-init'
+      role: 'dm-init',
+      turn: 0
     });
 
     const parsed = normalizeKeys(result.parsed || {});
@@ -50,13 +51,14 @@ export class DMAgent {
     };
   }
 
-  async resolveActions(worldState, characterActions, characterSpeech = [], dmInstructions = null) {
+  async resolveActions(worldState, characterActions, characterSpeech = [], dmInstructions = null, turn = null) {
     const prompt = dmResolutionPrompt(worldState, characterActions, characterSpeech, dmInstructions);
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,
       model: this.model,
-      role: 'dm-resolve'
+      role: 'dm-resolve',
+      turn
     });
 
     const parsed = normalizeKeys(result.parsed || {});

@@ -12,14 +12,15 @@ export class PlayerAgent {
   }
 
   // Phase 1: Think and Talk - player considers situation and speaks to nearby characters
-  async thinkAndTalk(worldState, recentHistory, previousTurnDialogue = []) {
+  async thinkAndTalk(worldState, recentHistory, previousTurnDialogue = [], turn = null) {
     const prompt = playerThinkTalkPrompt(this.character, worldState, recentHistory, previousTurnDialogue);
 
     const characterName = this.character.name.toLowerCase().replace(/\s+/g, '-');
     const result = await queryLLMJSON(prompt, {
       systemPrompt: PLAYER_SYSTEM_PROMPT,
       model: this.model,
-      role: `player-${characterName}-think`
+      role: `player-${characterName}-think`,
+      turn
     });
 
     return {
@@ -39,14 +40,15 @@ export class PlayerAgent {
   }
 
   // Phase 2: Action - player hears what others said and decides final action
-  async decideAction(worldState, recentHistory, nearbyDialogue = []) {
+  async decideAction(worldState, recentHistory, nearbyDialogue = [], turn = null) {
     const prompt = playerActionPrompt(this.character, worldState, recentHistory, nearbyDialogue);
 
     const characterName = this.character.name.toLowerCase().replace(/\s+/g, '-');
     const result = await queryLLMJSON(prompt, {
       systemPrompt: PLAYER_SYSTEM_PROMPT,
       model: this.model,
-      role: `player-${characterName}-action`
+      role: `player-${characterName}-action`,
+      turn
     });
 
     return {

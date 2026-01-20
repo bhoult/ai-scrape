@@ -388,7 +388,7 @@ export class GameEngine {
     const metadataJson = JSON.stringify(metadata);
 
     // Log the image prompt
-    logImagePrompt(imagePrompt, { turn, sceneFocus, sceneVisuals }, 'z-image-turbo');
+    logImagePrompt(imagePrompt, { turn, sceneFocus, sceneVisuals }, 'z-image-turbo', turn);
 
     // Always save the scene description record so we can regenerate later if needed
     const record = { turn, sceneFocus, sceneVisuals, narrative, imagePath: imageName, success: false };
@@ -1222,12 +1222,13 @@ Respond with ONLY a JSON object:
 
     // ===== PHASE 1: Think and Talk =====
     // All players consider the situation and speak to nearby characters
-    console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 1: Think and Talk`);
+    const currentTurn = this.worldState.turnNumber + 1;
+    console.log(`[Turn ${currentTurn}] Phase 1: Think and Talk`);
     const thinkTalkResults = await Promise.all(
       this.playerAgents.map(agent => {
         // Incapacitated characters can't act
         if (isIncapacitated(agent.character)) {
-          console.log(`[Turn ${this.worldState.turnNumber + 1}] ${agent.character.name} is incapacitated and cannot act`);
+          console.log(`[Turn ${currentTurn}] ${agent.character.name} is incapacitated and cannot act`);
           return {
             character: agent.character,
             thinking: 'Too weak to think clearly...',
@@ -1237,7 +1238,7 @@ Respond with ONLY a JSON object:
           };
         }
         const prevTurnInfo = previousTurnInfoMap[agent.character.id] || [];
-        return agent.thinkAndTalk(stateSnapshot, recentHistory, prevTurnInfo);
+        return agent.thinkAndTalk(stateSnapshot, recentHistory, prevTurnInfo, currentTurn);
       })
     );
 
@@ -1268,7 +1269,7 @@ Respond with ONLY a JSON object:
 
     // ===== PHASE 2: Action =====
     // All players hear what nearby characters said and decide their final action
-    console.log(`[Turn ${this.worldState.turnNumber + 1}] Phase 2: Action`);
+    console.log(`[Turn ${currentTurn}] Phase 2: Action`);
     const actionResults = await Promise.all(
       this.playerAgents.map(agent => {
         // Incapacitated characters can't act
@@ -1285,7 +1286,7 @@ Respond with ONLY a JSON object:
           };
         }
         const nearbySpeech = nearbySpeechMap[agent.character.id] || [];
-        return agent.decideAction(stateSnapshot, recentHistory, nearbySpeech);
+        return agent.decideAction(stateSnapshot, recentHistory, nearbySpeech, currentTurn);
       })
     );
 
@@ -1314,7 +1315,8 @@ Respond with ONLY a JSON object:
       stateSnapshot,
       characterActions,
       characterSpeech,
-      dmInstructions
+      dmInstructions,
+      currentTurn
     );
 
     // Defensive check for resolution
