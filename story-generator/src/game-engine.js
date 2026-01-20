@@ -7,6 +7,12 @@ import { DMAgent } from './agents/dm-agent.js';
 import { PlayerAgent } from './agents/player-agent.js';
 import { queryLLMJSON, setLogsDir, logImagePrompt } from './fireworks.js';
 import { novelWritingPrompt } from './prompts.js';
+import {
+  statGuidelines,
+  attitudeGuidelines,
+  generateStatGuidelinesText,
+  generateAttitudeGuidelinesText
+} from './behavior-config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORIES_DIR = join(__dirname, '../stories');
@@ -558,34 +564,9 @@ ${charDescriptions}
 
 Update clothing, status, inventory, stats, AND ATTITUDES for each character based on what happened.
 
-STAT GUIDELINES (all values 0-100):
-- health: Decrease for injuries, increase slowly with rest/medical care (~1-2% per hour resting)
-- stamina: IMPORTANT - recovery rates:
-  * Sleeping: +15-25% per hour (full recovery in ~4-6 hours)
-  * Resting (sitting, lying down): +8-12% per hour
-  * Light activity (walking slowly, talking): +2-4% per hour
-  * Moderate activity (walking, light work): -2-5% per hour
-  * Strenuous activity (running, fighting, climbing): -10-20% per hour
-  * Characters should NOT become exhausted from normal walking or light tasks
-- hunger: Increase ~2-5% per hour of activity, decrease significantly when eating (-30-50% from a meal)
-- thirst: IMPORTANT - hydration rates:
-  * Drinking water/fluids: -30-50% thirst immediately (a good drink should nearly eliminate thirst)
-  * Normal conditions: +2-4% thirst per hour
-  * Hot/desert/exertion: +5-10% thirst per hour
-  * Characters should NOT become severely dehydrated in just a few hours unless in extreme heat
-  * Finding and drinking water is a primary survival activity that should effectively reduce thirst
-- strength/dexterity/intelligence: Usually stable, but temporary penalties from injury/exhaustion
-- encumbrance: Based on inventory weight (0=empty hands, 100=overburdened)
-- sanity: Decrease from trauma, horror, isolation, or disturbing events; recover slowly with safety/companionship
-- anger: Increase from frustration, conflict, injustice, or provocation; decrease with time/resolution
-- fear: Increase from danger, threats, or frightening events; decrease with safety or facing fears
+${generateStatGuidelinesText(statGuidelines)}
 
-ATTITUDE GUIDELINES (all values 0-100, track feelings towards each OTHER character):
-- love: Deep affection, care, emotional bond. Increases with kindness, shared experiences, intimacy.
-- anger: Frustration, resentment towards that person. Increases with conflict, betrayal, insults.
-- attraction: Physical/romantic interest. Increases with flirtation, physical contact, admiration.
-- trust: Reliability, faith in the other person. Increases with honesty, support, kept promises.
-- fear: Fear OF that specific person. Increases with threats, violence, intimidation from them.
+${generateAttitudeGuidelinesText(attitudeGuidelines)}
 
 Respond with JSON only:
 {
@@ -1572,8 +1553,16 @@ Respond with ONLY a JSON object:
     const chapterType = isEnding ? 'final chapter' : (isContinuation ? 'continuation' : 'chapter');
     console.log(`[Novel] Generating ${chapterType} for Day ${dayNumber} in the style of ${authorStyle}...`);
 
+    // Read existing novel content for continuity
+    const novelPath = join(this.getStoryDir(), 'novel.md');
+    let existingNovel = null;
+    if (existsSync(novelPath)) {
+      existingNovel = readFileSync(novelPath, 'utf-8');
+      console.log(`[Novel] Including ${existingNovel.length} characters of existing novel for context`);
+    }
+
     try {
-      const prompt = novelWritingPrompt(dayNumber, this.dayEvents, this.worldState.getStateSnapshot(), authorStyle, isContinuation, isEnding);
+      const prompt = novelWritingPrompt(dayNumber, this.dayEvents, this.worldState.getStateSnapshot(), authorStyle, isContinuation, isEnding, existingNovel);
 
       const result = await queryLLMJSON(prompt, {
         systemPrompt: `You are a skilled novelist writing in the style of ${authorStyle}. Transform game events into compelling prose.`,

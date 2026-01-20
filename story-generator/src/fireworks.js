@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { FIREWORKS_API_URL, getAvailableModels, getFireworksModel, getApiKey, LLM_CONFIG } from './config.js';
+import { FIREWORKS_API_URL, getAvailableModels, getFireworksModel, getApiKey, LLM_CONFIG, getMaxTokensForModel, DEFAULT_MAX_TOKENS } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -89,10 +89,14 @@ export async function queryLLM(prompt, options = {}) {
 
   const modelId = getModelId(model);
 
+  // Get model-specific max_tokens based on context length
+  const maxTokens = model ? getMaxTokensForModel(model) : DEFAULT_MAX_TOKENS;
+
   const body = {
     model: modelId,
     messages,
-    ...LLM_CONFIG
+    ...LLM_CONFIG,
+    max_tokens: maxTokens
   };
 
   if (jsonMode) {
@@ -159,6 +163,13 @@ export async function queryLLM(prompt, options = {}) {
 export async function queryLLMJSON(prompt, options = {}) {
   const result = await queryLLM(prompt, { ...options, jsonMode: true });
 
+  // Check if response was truncated
+  const finishReason = result.response?.choices?.[0]?.finish_reason;
+  if (finishReason === 'length') {
+    const truncatedPreview = result.content?.slice(-200) || '';
+    throw new Error(`Response truncated (hit max_tokens). Last 200 chars: ...${truncatedPreview}`);
+  }
+
   try {
     result.parsed = JSON.parse(result.content);
   } catch (e) {
@@ -166,7 +177,9 @@ export async function queryLLMJSON(prompt, options = {}) {
     if (jsonMatch) {
       result.parsed = JSON.parse(jsonMatch[1]);
     } else {
-      throw new Error(`Failed to parse JSON response: ${result.content}`);
+      // Show more context for debugging truncation issues
+      const contentPreview = result.content?.slice(-500) || result.content;
+      throw new Error(`Failed to parse JSON response (possibly truncated). Last 500 chars: ...${contentPreview}`);
     }
   }
 

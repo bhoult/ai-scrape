@@ -1,3 +1,20 @@
+import {
+  statsBehavior,
+  attitudesBehavior,
+  dmStatThresholds,
+  abilityStats,
+  staminaRates,
+  hydrationRates,
+  generateStatsBehaviorText,
+  generateAttitudesBehaviorText,
+  generateActiveStatsBehaviorText,
+  generateActiveAttitudesBehaviorText,
+  generateDMStatThresholdsText,
+  generateAbilityStatsText,
+  generateStaminaGuidanceText,
+  generateHydrationGuidanceText
+} from './behavior-config.js';
+
 export const DM_SYSTEM_PROMPT = `You are a Dungeon Master narrating an interactive story from a third-person perspective. You observe and describe world events as an omniscient narrator.
 
 Your role:
@@ -374,6 +391,26 @@ export function playerThinkTalkPrompt(character, worldState, recentHistory, prev
     observedSection = `\nLAST TURN, YOU OBSERVED NEARBY:\n${observedLines}\n`;
   }
 
+  // Build character names map for attitude lookups
+  const characterNames = {};
+  for (const c of worldState.characters || []) {
+    characterNames[c.id] = c.name;
+  }
+
+  // Get contextual behavior guidance based on actual stat/attitude values
+  const activeStatEffects = generateActiveStatsBehaviorText(character.stats || {});
+  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames);
+
+  // Build stat effects section - only show if there are active effects
+  const statEffectsSection = activeStatEffects
+    ? `\nCRITICAL - Your current stat conditions that MUST affect your behavior:\n${activeStatEffects}`
+    : '';
+
+  // Build attitude effects section - only show if there are active effects
+  const attitudeEffectsSection = activeAttitudeEffects
+    ? `\nYour feelings towards others that should affect your interactions:\n${activeAttitudeEffects}`
+    : '';
+
   return `You are ${character.name}.
 
 CURRENT TIME: ${formatTime(worldState.time)}
@@ -388,33 +425,8 @@ YOUR CHARACTER:
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
-
-CRITICAL - Your stats MUST affect your behavior:
-- Stamina 0-10%: You are EXHAUSTED. You can barely move, may collapse. Only rest or urgent survival actions. REST TO RECOVER.
-- Stamina 11-30%: Very tired. Avoid physical exertion. Move slowly, take breaks to recover stamina.
-- Health 0-20%: CRITICALLY INJURED. Every action is agony. Focus only on survival/medical help.
-- Health 21-50%: Wounded. Physical actions are impaired and painful.
-- Hunger 70-100%: STARVING. Obsess about food. Difficulty concentrating on anything else.
-- Thirst 70-100%: DESPERATE for water. This overrides most other concerns.
-- Sanity 0-20%: BREAKING DOWN. Hallucinate, talk to yourself, make irrational/paranoid decisions.
-- Sanity 21-40%: Unstable. Erratic behavior, poor judgment, may misinterpret situations.
-- Anger 70-100%: FURIOUS. Aggressive, confrontational, may lash out or make rash decisions.
-- Fear 70-100%: TERRIFIED. May freeze, flee, refuse dangerous actions, or panic.
-- Encumbrance 80-100%: OVERBURDENED. Cannot run, very slow movement, may need to drop items.
-
-ATTITUDES affect how you interact with specific characters:
-- ATTRACTION 80-100%: INTENSE DESIRE - actively try to initiate sex, remove clothing, make suggestive comments, physical touching
-- ATTRACTION 60-79%: Seek physical proximity, flirtatious behavior, protective of them, may act foolishly to impress
-- ATTRACTION 40-59%: Friendly interest, enjoy their company, notice their appearance
-- LOVE 70-100%: Self-sacrificing, prioritize their wellbeing over your own, deep emotional bond
-- LOVE 40-69%: Care about them, willing to help, emotionally invested in their fate
-- ANGER 70-100%: Hostile, confrontational, refuse cooperation, may attack or sabotage them
-- ANGER 40-69%: Irritated, short-tempered with them, reluctant to help
-- TRUST 0-30%: Suspicious, won't share resources or information, keep distance, watch them carefully
-- TRUST 31-60%: Cautious, verify before believing, limited cooperation
-- TRUST 70-100%: Confide in them, share resources freely, follow their lead
-- FEAR 70-100%: Avoid them, submissive behavior, may flee, do what they say out of terror
-- FEAR 40-69%: Nervous around them, hesitant to disagree, easily intimidated
+${statEffectsSection}
+${attitudeEffectsSection}
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -455,6 +467,26 @@ export function playerActionPrompt(character, worldState, recentHistory, nearbyD
     dialogueSection = `\nYOU HEAR FROM NEARBY:\n${dialogueLines}\n\nRespond to what was said if appropriate, or act independently.\n`;
   }
 
+  // Build character names map for attitude lookups
+  const characterNames = {};
+  for (const c of worldState.characters || []) {
+    characterNames[c.id] = c.name;
+  }
+
+  // Get contextual behavior guidance based on actual stat/attitude values
+  const activeStatEffects = generateActiveStatsBehaviorText(character.stats || {});
+  const activeAttitudeEffects = generateActiveAttitudesBehaviorText(character.attitudes || {}, characterNames);
+
+  // Build stat effects section - only show if there are active effects
+  const statEffectsSection = activeStatEffects
+    ? `\nYour current conditions that MUST affect your actions:\n${activeStatEffects}`
+    : '';
+
+  // Build attitude effects section - only show if there are active effects
+  const attitudeEffectsSection = activeAttitudeEffects
+    ? `\nYour feelings that should affect interactions:\n${activeAttitudeEffects}`
+    : '';
+
   return `You are ${character.name}.
 
 CURRENT TIME: ${formatTime(worldState.time)}
@@ -469,28 +501,8 @@ YOUR CHARACTER:
 - Stats: ${ctx.statsStr}
 ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
-
-CRITICAL - Your stats MUST affect your actions:
-- Stamina 0-10%: EXHAUSTED - collapse, can barely move, REST to recover, only desperate survival
-- Stamina 11-30%: Very tired - no running, no strenuous activity, take breaks to recover
-- Health 0-20%: CRITICAL - every movement is agony, focus on medical help
-- Health 21-50%: Wounded - physical actions impaired and painful
-- Hunger 70%+: STARVING - obsess about food, poor concentration
-- Thirst 70%+: DESPERATE for water - overrides other concerns
-- Sanity 0-20%: BREAKING - hallucinate, irrational, paranoid
-- Sanity 21-40%: Unstable - erratic, poor judgment
-- Anger 70%+: FURIOUS - aggressive, may lash out
-- Fear 70%+: TERRIFIED - may freeze, flee, or panic
-- Encumbrance 80%+: OVERBURDENED - very slow, drop items
-
-ATTITUDES affect how you interact with specific characters:
-- ATTRACTION 80-100%: INTENSE DESIRE - initiate sex, remove clothing, suggestive comments, physical touching
-- ATTRACTION 60-79%: Seek proximity, flirtatious, protective, may act foolishly to impress
-- LOVE 70-100%: Self-sacrificing, prioritize their wellbeing, deep emotional bond
-- ANGER 70-100%: Hostile, refuse cooperation, may attack or sabotage
-- TRUST 0-30%: Suspicious, won't share resources, keep distance, watch carefully
-- TRUST 70-100%: Confide in them, share freely, follow their lead
-- FEAR 70-100%: Avoid, submissive, may flee, comply out of terror
+${statEffectsSection}
+${attitudeEffectsSection}
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -634,65 +646,14 @@ Resolve these actions realistically. Consider:
 
 STAT EFFECTS ON ACTIONS (ENFORCE THESE STRICTLY):
 
-STAMINA:
-- 0%: Character COLLAPSES unconscious. They cannot act until stamina recovers above 10%.
-- 1-10%: EXHAUSTED. Character can only crawl, speak weakly, or rest. All physical actions FAIL.
-- 11-30%: Very tired. Running FAILS. Strenuous actions have 50% chance of failure.
-- 31-50%: Fatigued. Physical actions are slower and less effective.
-
-HEALTH:
-- 0%: Character DIES (handled separately).
-- 1-20%: CRITICAL. Character can barely move due to pain. Most actions FAIL. May pass out.
-- 21-50%: Seriously wounded. Physical actions are impaired. May fail or worsen injury.
-
-HUNGER:
-- 80-100%: STARVING. Character is weak, shaky, may faint. -30% to all physical actions.
-- 60-79%: Very hungry. Distracted by hunger. -15% effectiveness. May eat anything available.
-
-THIRST:
-- 80-100%: SEVERE DEHYDRATION. Confusion, weakness, may collapse. Actions often FAIL.
-- 60-79%: Very thirsty. Impaired focus. Will prioritize finding water over other goals.
-
-SANITY:
-- 0-20%: PSYCHOTIC BREAK. Character hallucinates, talks to things that aren't there, may attack allies or flee from nothing. Their actions may be completely different from what they intended.
-- 21-40%: Unstable. Paranoid, sees threats everywhere, makes poor decisions. May misinterpret others' actions.
-- 41-60%: Stressed. Occasional irrational thoughts, easily startled, poor judgment under pressure.
-
-ANGER:
-- 80-100%: ENRAGED. May attack others without provocation. Cannot cooperate. Reckless.
-- 60-79%: Very angry. Confrontational, aggressive responses, may start fights.
-
-FEAR:
-- 80-100%: PARALYZED BY TERROR. Character freezes, cowers, or flees uncontrollably. Cannot perform dangerous actions.
-- 60-79%: Very frightened. May refuse risky actions, flee at first sign of danger.
-
-ENCUMBRANCE:
-- 90-100%: IMMOBILIZED. Cannot move until items are dropped.
-- 70-89%: Heavily burdened. Cannot run, very slow, may need to drop items to act.
+${generateDMStatThresholdsText(dmStatThresholds)}
 
 ABILITY STATS:
-- High strength (70+) = advantage on physical tasks (lifting, breaking, fighting)
-- Low strength (<30) = struggle with physical tasks, may fail
-- High dexterity (70+) = advantage on agility/precision tasks
-- Low dexterity (<30) = clumsy, may fumble or fail precise actions
-- High intelligence (70+) = better problem-solving, notice details, recall knowledge
-- Low intelligence (<30) = miss obvious solutions, poor planning
+${generateAbilityStatsText(abilityStats)}
 
-STAMINA DRAIN/RECOVERY (IMPORTANT - don't make characters tired too quickly):
-- Normal activities (walking, talking, observing) should NOT drain stamina significantly
-- Only STRENUOUS activities drain stamina quickly: running, fighting, climbing, heavy lifting, swimming
-- If characters rest (sit, lie down, take a break), their stamina RECOVERS
-- A character resting for an hour should recover 10-15% stamina
-- A character sleeping should recover 15-25% stamina per hour
-- Don't let characters become exhausted from ordinary survival activities like walking or searching
+${generateStaminaGuidanceText(staminaRates)}
 
-THIRST/HYDRATION (IMPORTANT - drinking water should help significantly):
-- Drinking water or fluids should reduce thirst by 30-50% immediately
-- A character who drinks adequately should have thirst near 0%
-- Normal conditions: thirst increases ~2-4% per hour
-- Hot/desert/heavy exertion: thirst increases ~5-10% per hour
-- Characters should NOT become severely dehydrated in just a few hours unless in extreme conditions
-- When characters find water and drink, their thirst should drop significantly
+${generateHydrationGuidanceText(hydrationRates)}
 
 Also consider:
 - How characters interact with each other based on their attitudes
@@ -876,7 +837,7 @@ Respond with JSON:
 }
 
 // Novel writing prompt - called at the end of each day
-export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle, isContinuation = false, isEnding = false) {
+export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle, isContinuation = false, isEnding = false, existingNovel = null) {
   const eventsText = dayEvents.map((event, i) => `${i + 1}. ${event}`).join('\n');
 
   const charactersText = worldState.characters.map(c => {
@@ -894,20 +855,26 @@ export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle
     chapterContext = `This covers the events of Day ${dayNumber}.`;
   }
 
+  // Include existing novel content for continuity
+  const novelSection = existingNovel
+    ? `\nTHE STORY SO FAR (your previous chapters - maintain consistency with this content):\n\n${existingNovel}\n\n---\n`
+    : '\nThis is the FIRST CHAPTER of the novel.\n';
+
   return `You are writing a novel chapter in the style of ${authorStyle}.
 
 TASK: Transform the following game events into a compelling novel chapter. Write prose, not a game log.
 ${chapterContext}
-
+${novelSection}
 AUTHOR STYLE: ${authorStyle}
 - Emulate this author's voice, sentence structure, pacing, and thematic concerns
 - Use their characteristic techniques (e.g., sparse prose for Hemingway, rich description for Tolkien, tension for King)
 - Match their typical chapter length and paragraph structure
+- IMPORTANT: Maintain consistency with the existing chapters above (character voice, established details, narrative threads)
 
 CHARACTERS:
 ${charactersText}
 
-EVENTS:
+NEW EVENTS TO NARRATE (these happened since the last chapter):
 ${eventsText}
 
 CURRENT STORY STATE:
@@ -922,6 +889,8 @@ REQUIREMENTS:
 4. Maintain narrative tension and pacing appropriate to the author
 5. The chapter should read like an actual published novel excerpt
 6. Length: 800-1500 words (adjust based on author's typical style)
+7. Continue naturally from where the previous chapter left off (if applicable)
+8. Do not repeat or retell events already covered in previous chapters
 ${isEnding ? `
 ENDING REQUIREMENTS (THIS IS THE FINAL CHAPTER):
 - Provide narrative closure - resolve or acknowledge the main story threads

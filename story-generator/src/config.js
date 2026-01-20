@@ -141,9 +141,29 @@ export function getFireworksModel() {
 
 export const LLM_CONFIG = {
   temperature: 0.7,
-  max_tokens: 4096,
   top_p: 1,
   top_k: 40,
   presence_penalty: 0,
   frequency_penalty: 0
 };
+
+// Default max_tokens if model context is unknown
+export const DEFAULT_MAX_TOKENS = 8192;
+
+// Get max output tokens for a model based on its context length
+// Uses up to 1/4 of context for output, capped at 16384
+export function getMaxTokensForModel(modelKey) {
+  const model = AVAILABLE_MODELS[modelKey];
+  if (!model || !model.context_length || model.context_length === 'Unknown') {
+    return DEFAULT_MAX_TOKENS;
+  }
+
+  // Use 1/4 of context for output, minimum 4096, maximum 16384
+  const contextLength = parseInt(model.context_length, 10);
+  if (isNaN(contextLength)) {
+    return DEFAULT_MAX_TOKENS;
+  }
+
+  const maxTokens = Math.floor(contextLength / 4);
+  return Math.max(4096, Math.min(maxTokens, 16384));
+}
