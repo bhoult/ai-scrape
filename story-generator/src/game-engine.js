@@ -564,6 +564,12 @@ ${charDescriptions}
 
 Update clothing, status, inventory, stats, AND ATTITUDES for each character based on what happened.
 
+CLOTHING GUIDELINES:
+- If characters remove clothing, update to reflect what they're still wearing
+- For intimate/sexual scenes: change clothing to "nude" or describe partial undress
+- If characters get dressed again, update clothing accordingly
+- Clothing can be damaged, torn, removed, or changed throughout the story
+
 ${generateStatGuidelinesText(statGuidelines)}
 
 ${generateAttitudeGuidelinesText(attitudeGuidelines)}
