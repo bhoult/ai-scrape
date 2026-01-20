@@ -37,10 +37,28 @@ export class WorldState {
   }
 
   initialize(dmResponse) {
+    // Validate required fields
+    if (!dmResponse.location) {
+      console.error('DM response missing location field:', Object.keys(dmResponse || {}));
+      dmResponse.location = {
+        id: 'unknown',
+        name: 'Unknown Location',
+        description: 'The surroundings are unclear.',
+        exits: ['north', 'south', 'east', 'west'],
+        items: [],
+        npcs: []
+      };
+    }
     this.currentLocation = dmResponse.location;
     this.locations.set(dmResponse.location.id, dmResponse.location);
+
+    // Validate characters
+    if (!Array.isArray(dmResponse.characters) || dmResponse.characters.length === 0) {
+      console.error('DM response missing or empty characters array:', dmResponse.characters);
+      throw new Error('No characters returned from initialization. The LLM may have refused the request.');
+    }
     this.characters = dmResponse.characters;
-    this.summary = dmResponse.worldSummary;
+    this.summary = dmResponse.worldSummary || 'The story begins.';
     this.history.push(dmResponse.narrative);
     if (dmResponse.time) {
       this.time = dmResponse.time;
