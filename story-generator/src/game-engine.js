@@ -243,7 +243,8 @@ export class GameEngine {
     const characters = this.worldState?.characters || [];
     return characters.map(c => {
       const appearance = c.appearance || {};
-      const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
+      // All keys are lowercase after normalizeKeys
+      const hairDesc = [appearance.hairlength, appearance.haircolor, appearance.hairstyle].filter(Boolean).join(' ');
       const expression = this.deriveExpression(c);
       const pose = this.derivePose(c);
       const parts = [
@@ -254,10 +255,10 @@ export class GameEngine {
         appearance.height,
         appearance.weight,
         appearance.build,
-        appearance.skinTone ? `${appearance.skinTone} skin` : null,
+        appearance.skintone ? `${appearance.skintone} skin` : null,
         hairDesc ? `${hairDesc} hair` : null,
-        appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
-        appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+        appearance.facialhair && appearance.facialhair !== 'none' ? appearance.facialhair : null,
+        appearance.eyecolor ? `${appearance.eyecolor} eyes` : null,
         appearance.face,
         appearance.distinguishing,
         expression,

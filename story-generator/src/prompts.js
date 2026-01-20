@@ -159,7 +159,8 @@ function buildPlayerContext(character, worldState, recentHistory) {
 
   const loc = worldState.currentLocation || {};
   const appearance = character.appearance || {};
-  const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
+  // All keys are lowercase after normalizeKeys
+  const hairDesc = [appearance.hairlength, appearance.haircolor, appearance.hairstyle].filter(Boolean).join(' ');
   const appearanceStr = [
     appearance.gender,
     appearance.age,
@@ -167,10 +168,10 @@ function buildPlayerContext(character, worldState, recentHistory) {
     appearance.height,
     appearance.weight,
     appearance.build,
-    appearance.skinTone ? `${appearance.skinTone} skin` : null,
+    appearance.skintone ? `${appearance.skintone} skin` : null,
     hairDesc ? `${hairDesc} hair` : null,
-    appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
-    appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+    appearance.facialhair && appearance.facialhair !== 'none' ? appearance.facialhair : null,
+    appearance.eyecolor ? `${appearance.eyecolor} eyes` : null,
     appearance.face,
     appearance.distinguishing
   ].filter(Boolean).join(', ') || 'Unknown';
@@ -481,7 +482,8 @@ export function dmResolutionPrompt(worldState, characterActions, characterSpeech
 
   const charactersText = worldState.characters.map(c => {
     const appearance = c.appearance || {};
-    const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
+    // All keys are lowercase after normalizeKeys
+    const hairDesc = [appearance.hairlength, appearance.haircolor, appearance.hairstyle].filter(Boolean).join(' ');
     const appearanceStr = [
       appearance.gender,
       appearance.age,
@@ -489,10 +491,10 @@ export function dmResolutionPrompt(worldState, characterActions, characterSpeech
       appearance.height,
       appearance.weight,
       appearance.build,
-      appearance.skinTone ? `${appearance.skinTone} skin` : null,
+      appearance.skintone ? `${appearance.skintone} skin` : null,
       hairDesc ? `${hairDesc} hair` : null,
-      appearance.facialHair && appearance.facialHair !== 'none' ? appearance.facialHair : null,
-      appearance.eyeColor ? `${appearance.eyeColor} eyes` : null,
+      appearance.facialhair && appearance.facialhair !== 'none' ? appearance.facialhair : null,
+      appearance.eyecolor ? `${appearance.eyecolor} eyes` : null,
       appearance.face,
       appearance.distinguishing
     ].filter(Boolean).join(', ');

@@ -127,18 +127,19 @@ export class PDFExporter {
         const appearance = char.appearance;
         const parts = [];
 
+        // All keys are lowercase after normalizeKeys
         if (appearance.gender) parts.push(appearance.gender);
         if (appearance.age) parts.push(appearance.age);
         if (appearance.height) parts.push(appearance.height);
         if (appearance.build) parts.push(appearance.build);
 
-        const hairParts = [appearance.hairLength, appearance.hairColor, appearance.hairStyle]
+        const hairParts = [appearance.hairlength, appearance.haircolor, appearance.hairstyle]
           .filter(p => p && p !== 'n/a')
           .join(' ');
         if (hairParts) parts.push(`${hairParts} hair`);
 
-        if (appearance.eyeColor && appearance.eyeColor !== 'n/a') {
-          parts.push(`${appearance.eyeColor} eyes`);
+        if (appearance.eyecolor && appearance.eyecolor !== 'n/a') {
+          parts.push(`${appearance.eyecolor} eyes`);
         }
         if (appearance.distinguishing) parts.push(appearance.distinguishing);
 
