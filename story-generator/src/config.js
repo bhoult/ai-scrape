@@ -154,7 +154,9 @@ export const DEFAULT_MAX_TOKENS = 4096;
 const MODEL_MAX_TOKENS = {
   'llama-v3p3-70b-instruct': 16384,
   'llama-v3p1-70b-instruct': 16384,
-  'llama-v3p1-405b-instruct': 16384
+  'llama-v3p1-405b-instruct': 16384,
+  'minimax-m1': 16384,
+  'minimax-m2': 16384
 };
 
 // Get max output tokens for a model
