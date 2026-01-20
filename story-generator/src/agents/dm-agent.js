@@ -72,12 +72,12 @@ export class DMAgent {
 
     return {
       narrative: parsed.narrative || 'The scene continues...',
-      sceneFocus: parsed.sceneFocus || 'characters',
-      sceneVisuals: parsed.sceneVisuals || {},
-      worldChanges: parsed.worldChanges || {},
-      worldSummary: parsed.worldSummary || '',
+      sceneFocus: parsed.scenefocus || 'characters',
+      sceneVisuals: parsed.scenevisuals || {},
+      worldChanges: parsed.worldchanges || {},
+      worldSummary: parsed.worldsummary || '',
       time: parsed.time || worldState.time || { day: 1, hour: 8, minute: 0 },
-      arcUpdates: parsed.arcUpdates || {},
+      arcUpdates: parsed.arcupdates || {},
       llmLog: log
     };
   }

@@ -37,6 +37,7 @@ export class WorldState {
   }
 
   initialize(dmResponse) {
+    // Note: All keys are lowercase after normalizeKeys() in dm-agent.js
     // Validate required fields
     if (!dmResponse.location) {
       console.error('DM response missing location field:', Object.keys(dmResponse || {}));
@@ -58,7 +59,7 @@ export class WorldState {
       throw new Error('No characters returned from initialization. The LLM may have refused the request.');
     }
     this.characters = dmResponse.characters;
-    this.summary = dmResponse.worldSummary || 'The story begins.';
+    this.summary = dmResponse.worldsummary || 'The story begins.';
     this.history.push(dmResponse.narrative);
     if (dmResponse.time) {
       this.time = dmResponse.time;
@@ -66,90 +67,91 @@ export class WorldState {
     if (dmResponse.environment) {
       this.environment = { ...this.environment, ...dmResponse.environment };
     }
-    if (dmResponse.storyGoal) {
-      this.storyGoal = dmResponse.storyGoal;
+    if (dmResponse.storygoal) {
+      this.storyGoal = dmResponse.storygoal;
     }
-    if (dmResponse.victoryConditions) {
-      this.victoryConditions = dmResponse.victoryConditions;
+    if (dmResponse.victoryconditions) {
+      this.victoryConditions = dmResponse.victoryconditions;
     }
-    if (dmResponse.narrativeArc) {
-      this.narrativeArc = dmResponse.narrativeArc;
+    if (dmResponse.narrativearc) {
+      this.narrativeArc = dmResponse.narrativearc;
     }
-    if (Array.isArray(dmResponse.majorEvents)) {
-      this.majorEvents = dmResponse.majorEvents;
+    if (Array.isArray(dmResponse.majorevents)) {
+      this.majorEvents = dmResponse.majorevents;
     }
     if (Array.isArray(dmResponse.tensions)) {
       this.tensions = dmResponse.tensions;
     }
-    if (Array.isArray(dmResponse.discoveredObjects)) {
-      this.discoveredObjects = dmResponse.discoveredObjects;
+    if (Array.isArray(dmResponse.discoveredobjects)) {
+      this.discoveredObjects = dmResponse.discoveredobjects;
     }
-    if (Array.isArray(dmResponse.mapFeatures)) {
-      this.mapFeatures = dmResponse.mapFeatures.map(f => ({
+    if (Array.isArray(dmResponse.mapfeatures)) {
+      this.mapFeatures = dmResponse.mapfeatures.map(f => ({
         ...f,
         discovered: false,
         discoveredTurn: null
       }));
     }
-    if (dmResponse.authorStyle) {
-      this.authorStyle = dmResponse.authorStyle;
+    if (dmResponse.authorstyle) {
+      this.authorStyle = dmResponse.authorstyle;
     }
   }
 
   applyChanges(changes) {
+    // Note: All keys are lowercase after normalizeKeys() in dm-agent.js
     if (!changes) return;
 
-    if (changes.locationUpdates && this.currentLocation) {
-      if (Array.isArray(changes.locationUpdates.items)) {
-        this.currentLocation.items = changes.locationUpdates.items;
+    if (changes.locationupdates && this.currentLocation) {
+      if (Array.isArray(changes.locationupdates.items)) {
+        this.currentLocation.items = changes.locationupdates.items;
       }
-      if (typeof changes.locationUpdates.description === 'string' && changes.locationUpdates.description) {
-        this.currentLocation.description = changes.locationUpdates.description;
+      if (typeof changes.locationupdates.description === 'string' && changes.locationupdates.description) {
+        this.currentLocation.description = changes.locationupdates.description;
       }
     }
 
-    if (Array.isArray(changes.characterUpdates)) {
-      for (const update of changes.characterUpdates) {
+    if (Array.isArray(changes.characterupdates)) {
+      for (const update of changes.characterupdates) {
         if (!update || !update.id) continue;
         const character = this.characters.find(c => c.id === update.id);
         if (character) {
-          if (Array.isArray(update.inventoryAdd)) {
-            character.inventory.push(...update.inventoryAdd);
+          if (Array.isArray(update.inventoryadd)) {
+            character.inventory.push(...update.inventoryadd);
           }
-          if (Array.isArray(update.inventoryRemove)) {
+          if (Array.isArray(update.inventoryremove)) {
             character.inventory = character.inventory.filter(
-              item => !update.inventoryRemove.includes(item)
+              item => !update.inventoryremove.includes(item)
             );
           }
-          if (typeof update.statusChange === 'string' && update.statusChange) {
-            character.status = update.statusChange;
+          if (typeof update.statuschange === 'string' && update.statuschange) {
+            character.status = update.statuschange;
           }
-          if (typeof update.clothingChange === 'string' && update.clothingChange) {
-            character.clothing = update.clothingChange;
+          if (typeof update.clothingchange === 'string' && update.clothingchange) {
+            character.clothing = update.clothingchange;
           }
-          if (update.statsChange && typeof update.statsChange === 'object') {
+          if (update.statschange && typeof update.statschange === 'object') {
             if (!character.stats) {
               character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
             }
-            for (const [stat, value] of Object.entries(update.statsChange)) {
+            for (const [stat, value] of Object.entries(update.statschange)) {
               if (typeof value === 'number' && value >= 0 && value <= 100) {
                 character.stats[stat] = value;
               }
             }
           }
           // Handle position updates
-          if (update.positionChange && typeof update.positionChange === 'object') {
+          if (update.positionchange && typeof update.positionchange === 'object') {
             character.position = {
-              x: typeof update.positionChange.x === 'number' ? update.positionChange.x : (character.position?.x || 0),
-              y: typeof update.positionChange.y === 'number' ? update.positionChange.y : (character.position?.y || 0)
+              x: typeof update.positionchange.x === 'number' ? update.positionchange.x : (character.position?.x || 0),
+              y: typeof update.positionchange.y === 'number' ? update.positionchange.y : (character.position?.y || 0)
             };
           }
           // Handle attitude updates
-          if (update.attitudesChange && typeof update.attitudesChange === 'object') {
+          if (update.attitudeschange && typeof update.attitudeschange === 'object') {
             if (!character.attitudes) {
               character.attitudes = {};
             }
-            for (const [targetId, feelings] of Object.entries(update.attitudesChange)) {
+            for (const [targetId, feelings] of Object.entries(update.attitudeschange)) {
               if (typeof feelings === 'object' && feelings !== null) {
                 if (!character.attitudes[targetId]) {
                   character.attitudes[targetId] = { love: 50, anger: 0, attraction: 0, trust: 50, fear: 0 };
@@ -167,18 +169,18 @@ export class WorldState {
     }
 
     // Only set newLocation if it's a valid location object with required fields
-    if (changes.newLocation &&
-        typeof changes.newLocation === 'object' &&
-        changes.newLocation.id &&
-        changes.newLocation.name) {
+    if (changes.newlocation &&
+        typeof changes.newlocation === 'object' &&
+        changes.newlocation.id &&
+        changes.newlocation.name) {
       this.currentLocation = {
-        ...changes.newLocation,
-        items: Array.isArray(changes.newLocation.items) ? changes.newLocation.items : [],
-        exits: Array.isArray(changes.newLocation.exits) ? changes.newLocation.exits : [],
-        npcs: Array.isArray(changes.newLocation.npcs) ? changes.newLocation.npcs : []
+        ...changes.newlocation,
+        items: Array.isArray(changes.newlocation.items) ? changes.newlocation.items : [],
+        exits: Array.isArray(changes.newlocation.exits) ? changes.newlocation.exits : [],
+        npcs: Array.isArray(changes.newlocation.npcs) ? changes.newlocation.npcs : []
       };
-      if (!this.locations.has(changes.newLocation.id)) {
-        this.locations.set(changes.newLocation.id, this.currentLocation);
+      if (!this.locations.has(changes.newlocation.id)) {
+        this.locations.set(changes.newlocation.id, this.currentLocation);
       }
     }
 
@@ -208,8 +210,8 @@ export class WorldState {
       }
     }
 
-    if (changes.environmentUpdate && typeof changes.environmentUpdate === 'object') {
-      for (const [key, value] of Object.entries(changes.environmentUpdate)) {
+    if (changes.environmentupdate && typeof changes.environmentupdate === 'object') {
+      for (const [key, value] of Object.entries(changes.environmentupdate)) {
         if (typeof value === 'string' && value && value !== 'null') {
           this.environment[key] = value;
         }
@@ -217,9 +219,9 @@ export class WorldState {
     }
 
     // Handle new characters (max 7 total)
-    if (changes.newCharacters && Array.isArray(changes.newCharacters)) {
+    if (changes.newcharacters && Array.isArray(changes.newcharacters)) {
       const MAX_CHARACTERS = 7;
-      for (const newChar of changes.newCharacters) {
+      for (const newChar of changes.newcharacters) {
         // Check if we're at the limit
         if (this.characters.length >= MAX_CHARACTERS) {
           console.warn(`Cannot add character ${newChar.name}: max ${MAX_CHARACTERS} characters reached`);
@@ -256,8 +258,8 @@ export class WorldState {
     }
 
     // Handle discovered object updates
-    if (Array.isArray(changes.discoveredObjects)) {
-      for (const obj of changes.discoveredObjects) {
+    if (Array.isArray(changes.discoveredobjects)) {
+      for (const obj of changes.discoveredobjects) {
         if (!obj || !obj.id) continue;
         const existing = this.discoveredObjects.find(o => o.id === obj.id);
         if (existing) {
@@ -280,20 +282,21 @@ export class WorldState {
     }
 
     // Handle removed objects (picked up, destroyed, etc.)
-    if (Array.isArray(changes.removedObjects)) {
-      const removeIds = new Set(changes.removedObjects);
+    if (Array.isArray(changes.removedobjects)) {
+      const removeIds = new Set(changes.removedobjects);
       this.discoveredObjects = this.discoveredObjects.filter(o => !removeIds.has(o.id));
     }
 
     // Handle discovered map features
-    if (Array.isArray(changes.discoveredMapFeatures)) {
-      for (const featureId of changes.discoveredMapFeatures) {
+    if (Array.isArray(changes.discoveredmapfeatures)) {
+      for (const featureId of changes.discoveredmapfeatures) {
         this.discoverFeature(featureId, this.turnNumber);
       }
     }
   }
 
   advanceTurn(narrative, summary, time, arcUpdates = null) {
+    // Note: arcUpdates keys are lowercase after normalizeKeys() in dm-agent.js
     this.turnNumber++;
     this.history.push(narrative);
     this.summary = summary;
@@ -301,17 +304,17 @@ export class WorldState {
       this.time = time;
     }
     if (arcUpdates) {
-      if (typeof arcUpdates.narrativeArc === 'string') {
-        this.narrativeArc = arcUpdates.narrativeArc;
+      if (typeof arcUpdates.narrativearc === 'string') {
+        this.narrativeArc = arcUpdates.narrativearc;
       }
-      if (Array.isArray(arcUpdates.newMajorEvents)) {
-        this.majorEvents.push(...arcUpdates.newMajorEvents);
+      if (Array.isArray(arcUpdates.newmajorevents)) {
+        this.majorEvents.push(...arcUpdates.newmajorevents);
       }
       if (Array.isArray(arcUpdates.tensions)) {
         this.tensions = arcUpdates.tensions;
       }
-      if (typeof arcUpdates.storyGoal === 'string') {
-        this.storyGoal = arcUpdates.storyGoal;
+      if (typeof arcUpdates.storygoal === 'string') {
+        this.storyGoal = arcUpdates.storygoal;
       }
     }
   }

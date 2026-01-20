@@ -284,6 +284,9 @@ export class GameEngine {
     const envDesc = this.buildEnvironmentDescription();
     const visuals = sceneVisuals || {};
 
+    // Helper to get visuals field (handles both camelCase and lowercase from normalizeKeys)
+    const getVisual = (field) => visuals[field] || visuals[field.toLowerCase()] || visuals[field.charAt(0).toUpperCase() + field.slice(1)];
+
     switch (sceneFocus) {
       case 'characters':
         // Characters are the focus - include full character descriptions + action + environment
@@ -291,8 +294,9 @@ export class GameEngine {
         if (characterDescs.length > 0) {
           parts.push(characterDescs.join('. '));
         }
-        if (visuals.characterAction) {
-          parts.push(visuals.characterAction);
+        const charAction = getVisual('characterAction') || getVisual('description');
+        if (charAction) {
+          parts.push(charAction);
         }
         if (envDesc) parts.push(envDesc);
         break;
@@ -304,8 +308,9 @@ export class GameEngine {
 
       case 'object':
         // Object focus - object description + discovered objects details + environment
-        if (visuals.objectDescription) {
-          parts.push(visuals.objectDescription);
+        const objDesc = getVisual('objectDescription') || getVisual('description');
+        if (objDesc) {
+          parts.push(objDesc);
         }
         // Add discovered objects from world state for richer context
         if (this.worldState?.discoveredObjects?.length > 0) {
@@ -322,8 +327,9 @@ export class GameEngine {
 
       case 'phenomenon':
         // Phenomenon focus - phenomenon description + narrative context + environment
-        if (visuals.phenomenonDescription) {
-          parts.push(visuals.phenomenonDescription);
+        const phenDesc = getVisual('phenomenonDescription') || getVisual('description');
+        if (phenDesc) {
+          parts.push(phenDesc);
         }
         // Add narrative context for richer description (first sentence only, no character names)
         if (narrative) {
@@ -1134,9 +1140,9 @@ Respond with ONLY a JSON object:
     this.storyContent.push(`## Opening${timeStr ? ` - ${timeStr}` : ''}`);
     this.storyContent.push(data.narrative);
 
-    // Generate image for opening scene
-    if (data.sceneFocus && data.sceneVisuals) {
-      await this.generateImage(0, data.sceneFocus, data.sceneVisuals, data.narrative);
+    // Generate image for opening scene (keys are lowercase after normalizeKeys)
+    if (data.scenefocus && data.scenevisuals) {
+      await this.generateImage(0, data.scenefocus, data.scenevisuals, data.narrative);
     }
 
     // Save snapshot for turn 0 (opening) to enable rollback
