@@ -253,6 +253,39 @@ app.get('/api/game/log', (req, res) => {
   });
 });
 
+// Manually trigger novel chapter generation
+app.post('/api/game/generate-novel', async (req, res) => {
+  try {
+    if (!gameEngine) {
+      return res.status(400).json({ error: 'No game in progress' });
+    }
+
+    const result = await gameEngine.triggerNovelGeneration();
+    res.json(result);
+  } catch (error) {
+    console.error('Error generating novel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update character data (stats, inventory, attitudes)
+app.post('/api/game/character/:id', (req, res) => {
+  try {
+    if (!gameEngine) {
+      return res.status(400).json({ error: 'No game in progress' });
+    }
+
+    const { id } = req.params;
+    const { stats, inventory, attitudes, status } = req.body;
+
+    const character = gameEngine.updateCharacter(id, { stats, inventory, attitudes, status });
+    res.json({ success: true, character });
+  } catch (error) {
+    console.error('Error updating character:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Export story as PDF
 app.get('/api/stories/:id/export/pdf', async (req, res) => {
   try {

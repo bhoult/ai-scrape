@@ -24,6 +24,7 @@ const modelCharacterSelect = document.getElementById('model-character');
 const modelNarratorSelect = document.getElementById('model-narrator');
 const authorStyleInput = document.getElementById('author-style');
 const characterDisplay = document.getElementById('character-display');
+const writeChapterBtn = document.getElementById('write-chapter-btn');
 
 let currentTurn = 0;
 let currentStoryId = null;
@@ -657,11 +658,17 @@ function renderWorldState(state) {
   worldState.innerHTML = html;
 }
 
+// Store characters globally for editing
+let currentCharacters = [];
+
 function renderCharacterDisplay(characters) {
   if (!characters || characters.length === 0) {
     characterDisplay.innerHTML = '<p class="placeholder">No characters yet</p>';
+    currentCharacters = [];
     return;
   }
+
+  currentCharacters = characters;
 
   const statLabels = {
     health: 'Health',
@@ -699,12 +706,12 @@ function renderCharacterDisplay(characters) {
 
     const disposition = char.disposition || '';
     const dispositionClass = disposition === 'hostile' ? 'hostile' : disposition === 'friendly' ? 'friendly' : '';
-    html += `<div class="character-card ${dispositionClass}">
+    html += `<div class="character-card ${dispositionClass}" data-character-id="${char.id}">
       <h3>
         <span>${char.name}${disposition ? ` <span class="disposition ${dispositionClass}">[${disposition}]</span>` : ''}</span>
         <span class="status">${char.status || 'Unknown'}</span>
       </h3>
-      <div class="character-stats">`;
+      <div class="character-stats clickable" data-edit="stats" title="Click to edit stats">`;
 
     for (const [stat, label] of Object.entries(statLabels)) {
       const value = stats[stat] ?? statDefaults[stat];
@@ -733,7 +740,7 @@ function renderCharacterDisplay(characters) {
 
     // Add inventory section
     const inventory = char.inventory || [];
-    html += `<div class="character-inventory">
+    html += `<div class="character-inventory clickable" data-edit="inventory" title="Click to edit inventory">
       <span class="inventory-label">Inventory:</span>
       <span class="inventory-items">${inventory.length > 0 ? inventory.join(', ') : 'Nothing'}</span>
     </div>`;
@@ -742,7 +749,7 @@ function renderCharacterDisplay(characters) {
     const attitudes = char.attitudes || {};
     const otherCharacters = characters.filter(c => c.id !== char.id);
     if (otherCharacters.length > 0) {
-      html += `<div class="character-attitudes">
+      html += `<div class="character-attitudes clickable" data-edit="attitudes" title="Click to edit attitudes">
         <span class="attitudes-label">Attitudes:</span>`;
       for (const targetChar of otherCharacters) {
         const feelings = attitudes[targetChar.id] || {};
@@ -765,9 +772,218 @@ function renderCharacterDisplay(characters) {
 
   characterDisplay.innerHTML = html;
 
+  // Add click handlers for editing
+  characterDisplay.querySelectorAll('.clickable').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = el.closest('.character-card');
+      const charId = card.dataset.characterId;
+      const editType = el.dataset.edit;
+      const char = currentCharacters.find(c => c.id === charId);
+      if (char) {
+        openCharacterEditor(char, editType);
+      }
+    });
+  });
+
   // Store current stats for next comparison
   for (const char of characters) {
     previousCharacterStats[char.id] = { ...(char.stats || statDefaults) };
+  }
+}
+
+// Character Editor Modal
+function openCharacterEditor(character, editType) {
+  const overlay = document.createElement('div');
+  overlay.className = 'editor-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'editor-modal';
+
+  let content = `<h3>Edit ${character.name} - ${editType.charAt(0).toUpperCase() + editType.slice(1)}</h3>`;
+
+  if (editType === 'stats') {
+    content += buildStatsEditor(character);
+  } else if (editType === 'inventory') {
+    content += buildInventoryEditor(character);
+  } else if (editType === 'attitudes') {
+    content += buildAttitudesEditor(character);
+  }
+
+  content += `
+    <div class="editor-buttons">
+      <button class="editor-save-btn">Save</button>
+      <button class="editor-cancel-btn">Cancel</button>
+    </div>
+  `;
+
+  modal.innerHTML = content;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Close handlers
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  modal.querySelector('.editor-cancel-btn').addEventListener('click', () => overlay.remove());
+
+  // Save handler
+  modal.querySelector('.editor-save-btn').addEventListener('click', async () => {
+    const updates = {};
+
+    if (editType === 'stats') {
+      updates.stats = {};
+      modal.querySelectorAll('.stat-input').forEach(input => {
+        updates.stats[input.dataset.stat] = parseInt(input.value) || 0;
+      });
+    } else if (editType === 'inventory') {
+      const inventoryText = modal.querySelector('.inventory-input').value;
+      updates.inventory = inventoryText.split(',').map(s => s.trim()).filter(s => s);
+    } else if (editType === 'attitudes') {
+      updates.attitudes = {};
+      modal.querySelectorAll('.attitude-target-group').forEach(group => {
+        const targetId = group.dataset.targetId;
+        updates.attitudes[targetId] = {};
+        group.querySelectorAll('.attitude-input').forEach(input => {
+          updates.attitudes[targetId][input.dataset.feeling] = parseInt(input.value) || 0;
+        });
+      });
+    }
+
+    await saveCharacterUpdate(character.id, updates);
+    overlay.remove();
+  });
+
+  // Escape key handler
+  const closeOnEscape = (e) => {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      document.removeEventListener('keydown', closeOnEscape);
+    }
+  };
+  document.addEventListener('keydown', closeOnEscape);
+}
+
+function buildStatsEditor(character) {
+  const stats = character.stats || {};
+  const statLabels = {
+    health: 'Health',
+    stamina: 'Stamina',
+    hunger: 'Hunger',
+    thirst: 'Thirst',
+    strength: 'Strength',
+    dexterity: 'Dexterity',
+    intelligence: 'Intelligence',
+    encumbrance: 'Encumbrance',
+    sanity: 'Sanity',
+    anger: 'Anger',
+    fear: 'Fear'
+  };
+  const statDefaults = {
+    health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50,
+    dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0
+  };
+
+  let html = '<div class="stats-editor">';
+  for (const [stat, label] of Object.entries(statLabels)) {
+    const value = stats[stat] ?? statDefaults[stat];
+    html += `
+      <div class="stat-edit-row">
+        <label>${label}</label>
+        <input type="range" class="stat-input" data-stat="${stat}" value="${value}" min="0" max="100">
+        <span class="stat-edit-value">${value}%</span>
+      </div>
+    `;
+  }
+  html += '</div>';
+
+  // Add script for live value updates
+  setTimeout(() => {
+    document.querySelectorAll('.stat-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        e.target.nextElementSibling.textContent = e.target.value + '%';
+      });
+    });
+  }, 0);
+
+  return html;
+}
+
+function buildInventoryEditor(character) {
+  const inventory = character.inventory || [];
+  return `
+    <div class="inventory-editor">
+      <p>Enter items separated by commas:</p>
+      <textarea class="inventory-input" rows="4">${inventory.join(', ')}</textarea>
+    </div>
+  `;
+}
+
+function buildAttitudesEditor(character) {
+  const attitudes = character.attitudes || {};
+  const otherCharacters = currentCharacters.filter(c => c.id !== character.id);
+  const feelingLabels = { love: 'Love', anger: 'Anger', attraction: 'Attraction', trust: 'Trust', fear: 'Fear' };
+  const defaultValues = { love: 50, anger: 0, attraction: 0, trust: 50, fear: 0 };
+
+  let html = '<div class="attitudes-editor">';
+
+  for (const target of otherCharacters) {
+    const feelings = attitudes[target.id] || {};
+    html += `<div class="attitude-target-group" data-target-id="${target.id}">
+      <h4>Towards ${target.name}</h4>`;
+
+    for (const [feeling, label] of Object.entries(feelingLabels)) {
+      const value = feelings[feeling] ?? defaultValues[feeling];
+      html += `
+        <div class="attitude-edit-row">
+          <label>${label}</label>
+          <input type="range" class="attitude-input" data-feeling="${feeling}" value="${value}" min="0" max="100">
+          <span class="attitude-edit-value">${value}%</span>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+  }
+
+  html += '</div>';
+
+  // Add script for live value updates
+  setTimeout(() => {
+    document.querySelectorAll('.attitude-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        e.target.nextElementSibling.textContent = e.target.value + '%';
+      });
+    });
+  }, 0);
+
+  return html;
+}
+
+async function saveCharacterUpdate(characterId, updates) {
+  try {
+    const response = await fetch(`/api/game/character/${characterId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to update character');
+    }
+
+    // Refresh the display
+    const stateResponse = await fetch('/api/game/state');
+    const stateData = await stateResponse.json();
+    if (stateData.worldState) {
+      renderCharacterDisplay(stateData.worldState.characters);
+      renderWorldState(stateData.worldState);
+    }
+  } catch (error) {
+    alert('Error saving character: ' + error.message);
+    console.error(error);
   }
 }
 
@@ -868,6 +1084,7 @@ async function startGame() {
     }
 
     turnBtn.disabled = false;
+    writeChapterBtn.disabled = false;
     turnCounter.textContent = 'Turn: 0';
     timeDisplay.textContent = formatTime(data.worldState.time);
     dmControls.style.display = 'block';
@@ -884,16 +1101,39 @@ async function startGame() {
   }
 }
 
+let cancelTurnsRequested = false;
+
 async function advanceTurn() {
   const turnCount = parseInt(turnCountInput.value) || 1;
+  cancelTurnsRequested = false;
   showLoading();
   turnBtn.disabled = true;
   turnCountInput.disabled = true;
+
+  // Show cancel button for multi-turn processing
+  let cancelBtn = null;
+  if (turnCount > 1) {
+    cancelBtn = document.createElement('button');
+    cancelBtn.id = 'cancel-turns-btn';
+    cancelBtn.textContent = 'Stop After Current Turn';
+    cancelBtn.addEventListener('click', () => {
+      cancelTurnsRequested = true;
+      cancelBtn.textContent = 'Stopping...';
+      cancelBtn.disabled = true;
+    });
+    loading.appendChild(cancelBtn);
+  }
 
   const dmInstructions = dmInstructionsInput.value.trim() || null;
 
   try {
     for (let i = 0; i < turnCount; i++) {
+      // Check for cancellation before starting next turn
+      if (i > 0 && cancelTurnsRequested) {
+        console.log(`Cancelled after turn ${i} of ${turnCount}`);
+        break;
+      }
+
       // Update loading message for multiple turns
       if (turnCount > 1) {
         loading.querySelector('p').textContent = `Processing turn ${i + 1} of ${turnCount}...`;
@@ -917,10 +1157,16 @@ async function advanceTurn() {
 
       renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time, data.thinkTalk);
       renderWorldState(data.worldState);
-    renderCharacterDisplay(data.worldState.characters);
+      renderCharacterDisplay(data.worldState.characters);
 
       for (const log of data.turnLogs) {
         renderLogEntry(log);
+      }
+
+      // Check if story completed
+      if (data.storyComplete) {
+        console.log('Story completed, stopping turns');
+        break;
       }
     }
 
@@ -929,15 +1175,56 @@ async function advanceTurn() {
     alert('Error advancing turn: ' + error.message);
     console.error(error);
   } finally {
+    // Remove cancel button if it exists
+    if (cancelBtn) {
+      cancelBtn.remove();
+    }
     loading.querySelector('p').textContent = 'Processing...';
     hideLoading();
     turnBtn.disabled = false;
     turnCountInput.disabled = false;
+    cancelTurnsRequested = false;
   }
 }
 
 startBtn.addEventListener('click', startGame);
 turnBtn.addEventListener('click', advanceTurn);
+writeChapterBtn.addEventListener('click', writeChapter);
+
+// Write a novel chapter manually
+async function writeChapter() {
+  if (!currentStoryId) return;
+
+  showLoading();
+  loading.querySelector('p').textContent = 'Writing chapter...';
+  writeChapterBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/game/generate-novel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to generate chapter');
+    }
+
+    if (data.success) {
+      alert('Novel chapter written successfully!');
+    } else {
+      alert(data.message || 'No chapter generated');
+    }
+  } catch (error) {
+    alert('Error writing chapter: ' + error.message);
+    console.error(error);
+  } finally {
+    loading.querySelector('p').textContent = 'Processing...';
+    hideLoading();
+    writeChapterBtn.disabled = false;
+  }
+}
 
 // Story menu functions
 async function loadStoryList() {
@@ -1119,6 +1406,7 @@ async function loadStory(storyId) {
     }
 
     turnBtn.disabled = false;
+    writeChapterBtn.disabled = false;
     dmControls.style.display = 'block';
 
     storyContent.scrollTop = storyContent.scrollHeight;

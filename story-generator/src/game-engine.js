@@ -175,12 +175,71 @@ export class GameEngine {
     return expressions.slice(0, 2).join(', '); // Limit to 2 expressions max
   }
 
+  derivePose(character) {
+    const stats = character.stats || {};
+    const status = (character.status || '').toLowerCase();
+
+    // Check status for explicit poses
+    if (status.includes('collapsed') || status.includes('unconscious') || status.includes('dead')) {
+      return 'lying on the ground';
+    }
+    if (status.includes('sleeping') || status.includes('asleep')) {
+      return 'lying down sleeping';
+    }
+    if (status.includes('resting') || status.includes('sitting')) {
+      return 'sitting down';
+    }
+    if (status.includes('kneeling') || status.includes('crouching')) {
+      return 'kneeling';
+    }
+    if (status.includes('running') || status.includes('fleeing')) {
+      return 'running';
+    }
+    if (status.includes('fighting') || status.includes('attacking')) {
+      return 'in fighting stance';
+    }
+    if (status.includes('climbing')) {
+      return 'climbing';
+    }
+    if (status.includes('swimming')) {
+      return 'swimming';
+    }
+
+    // Derive pose from stats
+    const stamina = stats.stamina ?? 100;
+    const health = stats.health ?? 100;
+
+    if (stamina <= 10 || health <= 10) {
+      return 'collapsed on the ground';
+    }
+    if (stamina <= 30 || health <= 30) {
+      return 'sitting down exhausted';
+    }
+    if (stamina <= 50) {
+      return 'leaning or resting';
+    }
+
+    // Default standing poses
+    const fear = stats.fear ?? 0;
+    const anger = stats.anger ?? 0;
+
+    if (fear >= 70) {
+      return 'cowering or backing away';
+    }
+    if (anger >= 70) {
+      return 'aggressive stance';
+    }
+
+    return 'standing';
+  }
+
   buildCharacterDescriptions() {
     const characters = this.worldState?.characters || [];
     return characters.map(c => {
       const appearance = c.appearance || {};
       const hairDesc = [appearance.hairLength, appearance.hairColor, appearance.hairStyle].filter(Boolean).join(' ');
       const expression = this.deriveExpression(c);
+      const pose = this.derivePose(c);
       const parts = [
         c.name,
         appearance.gender,
@@ -194,6 +253,7 @@ export class GameEngine {
         appearance.face,
         appearance.distinguishing,
         expression,
+        pose,
         c.clothing ? `wearing ${c.clothing}` : null
       ].filter(Boolean).join(', ');
       return parts;
@@ -499,10 +559,21 @@ ${charDescriptions}
 Update clothing, status, inventory, stats, AND ATTITUDES for each character based on what happened.
 
 STAT GUIDELINES (all values 0-100):
-- health: Decrease for injuries, increase slowly with rest/medical care
-- stamina: Decrease with physical exertion (running, fighting, climbing), recover with rest
-- hunger: Increase ~2-5% per hour of activity, decrease when eating
-- thirst: Increase ~3-8% per hour (faster in heat/exertion), decrease when drinking
+- health: Decrease for injuries, increase slowly with rest/medical care (~1-2% per hour resting)
+- stamina: IMPORTANT - recovery rates:
+  * Sleeping: +15-25% per hour (full recovery in ~4-6 hours)
+  * Resting (sitting, lying down): +8-12% per hour
+  * Light activity (walking slowly, talking): +2-4% per hour
+  * Moderate activity (walking, light work): -2-5% per hour
+  * Strenuous activity (running, fighting, climbing): -10-20% per hour
+  * Characters should NOT become exhausted from normal walking or light tasks
+- hunger: Increase ~2-5% per hour of activity, decrease significantly when eating (-30-50% from a meal)
+- thirst: IMPORTANT - hydration rates:
+  * Drinking water/fluids: -30-50% thirst immediately (a good drink should nearly eliminate thirst)
+  * Normal conditions: +2-4% thirst per hour
+  * Hot/desert/exertion: +5-10% thirst per hour
+  * Characters should NOT become severely dehydrated in just a few hours unless in extreme heat
+  * Finding and drinking water is a primary survival activity that should effectively reduce thirst
 - strength/dexterity/intelligence: Usually stable, but temporary penalties from injury/exhaustion
 - encumbrance: Based on inventory weight (0=empty hands, 100=overburdened)
 - sanity: Decrease from trauma, horror, isolation, or disturbing events; recover slowly with safety/companionship
@@ -1361,7 +1432,13 @@ Respond with ONLY a JSON object:
     const newDay = resolution.time?.day || this.worldState.time?.day || 1;
     const turnsSinceLastNovel = this.worldState.turnNumber - this.lastNovelTurn;
 
-    if (newDay > this.currentDay) {
+    // If story is ending, prioritize the final chapter over day/40-turn chapters
+    if (storyEnding && this.dayEvents.length > 0) {
+      console.log(`[Novel] Story ended, generating final chapter...`);
+      await this.generateNovelChapter(this.currentDay, false, true); // isEnding = true
+      this.lastNovelTurn = this.worldState.turnNumber;
+      this.dayEvents = [];
+    } else if (newDay > this.currentDay) {
       // Day changed - generate chapter for the completed day
       await this.generateNovelChapter(this.currentDay);
       this.lastNovelTurn = this.worldState.turnNumber;
@@ -1415,8 +1492,72 @@ Respond with ONLY a JSON object:
     return this.llmLog;
   }
 
-  // Generate a novel chapter for a completed day (or mid-day continuation after 40 turns)
-  async generateNovelChapter(dayNumber, isContinuation = false) {
+  // Update a character's data (stats, inventory, attitudes)
+  updateCharacter(characterId, updates) {
+    if (!this.initialized) {
+      throw new Error('Game not initialized');
+    }
+
+    const character = this.worldState.characters.find(c => c.id === characterId);
+    if (!character) {
+      throw new Error(`Character not found: ${characterId}`);
+    }
+
+    // Update stats
+    if (updates.stats) {
+      character.stats = { ...character.stats, ...updates.stats };
+    }
+
+    // Update inventory
+    if (updates.inventory !== undefined) {
+      character.inventory = updates.inventory;
+    }
+
+    // Update attitudes
+    if (updates.attitudes) {
+      character.attitudes = { ...character.attitudes, ...updates.attitudes };
+    }
+
+    // Update status
+    if (updates.status !== undefined) {
+      character.status = updates.status;
+    }
+
+    // Process stat effects to update status based on new stats
+    this.processStatEffects();
+
+    // Save changes
+    this.saveStory();
+
+    return character;
+  }
+
+  // Manually trigger novel chapter generation
+  async triggerNovelGeneration() {
+    if (!this.initialized) {
+      throw new Error('Game not initialized');
+    }
+
+    if (this.dayEvents.length === 0) {
+      return { success: false, message: 'No events to write about' };
+    }
+
+    const authorStyle = this.worldState.authorStyle;
+    if (!authorStyle) {
+      return { success: false, message: 'No author style set' };
+    }
+
+    console.log(`[Novel] Manual trigger - generating chapter...`);
+    await this.generateNovelChapter(this.currentDay, true); // treat as continuation
+    this.lastNovelTurn = this.worldState.turnNumber;
+    this.dayEvents = []; // Reset events after writing
+    this.saveStory();
+
+    return { success: true, message: 'Novel chapter generated' };
+  }
+
+  // Generate a novel chapter for a completed day, mid-day continuation, or story ending
+  async generateNovelChapter(dayNumber, isContinuation = false, isEnding = false) {
     const authorStyle = this.worldState.authorStyle;
     if (!authorStyle) {
       console.log(`[Novel] No author style set, skipping novel generation for day ${dayNumber}`);
@@ -1428,11 +1569,11 @@ Respond with ONLY a JSON object:
       return;
     }
 
-    const chapterType = isContinuation ? 'continuation' : 'chapter';
+    const chapterType = isEnding ? 'final chapter' : (isContinuation ? 'continuation' : 'chapter');
     console.log(`[Novel] Generating ${chapterType} for Day ${dayNumber} in the style of ${authorStyle}...`);
 
     try {
-      const prompt = novelWritingPrompt(dayNumber, this.dayEvents, this.worldState.getStateSnapshot(), authorStyle, isContinuation);
+      const prompt = novelWritingPrompt(dayNumber, this.dayEvents, this.worldState.getStateSnapshot(), authorStyle, isContinuation, isEnding);
 
       const result = await queryLLMJSON(prompt, {
         systemPrompt: `You are a skilled novelist writing in the style of ${authorStyle}. Transform game events into compelling prose.`,
@@ -1454,13 +1595,25 @@ Respond with ONLY a JSON object:
       }
 
       // Add the new chapter
-      const chapterTitle = parsed.chapterTitle || `Day ${dayNumber}`;
+      const chapterTitle = parsed.chapterTitle || (isEnding ? 'The End' : `Day ${dayNumber}`);
       const chapterText = parsed.chapterText || 'The day passed uneventfully.';
 
-      novelContent += `## ${chapterTitle}\n\n${chapterText}\n\n---\n\n`;
+      novelContent += `## ${chapterTitle}\n\n${chapterText}\n\n`;
+
+      // Add "THE END" marker for final chapters
+      if (isEnding) {
+        novelContent += `---\n\n# THE END\n\n`;
+        const endingType = this.worldState.storyEnding?.type || 'conclusion';
+        const endingSummary = this.worldState.storyEnding?.summary || '';
+        if (endingSummary) {
+          novelContent += `*${endingSummary}*\n\n`;
+        }
+      } else {
+        novelContent += `---\n\n`;
+      }
 
       writeFileSync(novelPath, novelContent);
-      console.log(`[Novel] Chapter "${chapterTitle}" written to novel.md`);
+      console.log(`[Novel] ${isEnding ? 'Final chapter' : `Chapter "${chapterTitle}"`} written to novel.md`);
 
       // Update summaries in world state if provided
       if (parsed.historySummary) {

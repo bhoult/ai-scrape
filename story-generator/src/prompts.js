@@ -390,8 +390,8 @@ ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
 
 CRITICAL - Your stats MUST affect your behavior:
-- Stamina 0-10%: You are EXHAUSTED. You can barely move, may collapse. Only rest or urgent survival actions.
-- Stamina 11-30%: Very tired. Avoid physical exertion. Move slowly, rest frequently.
+- Stamina 0-10%: You are EXHAUSTED. You can barely move, may collapse. Only rest or urgent survival actions. REST TO RECOVER.
+- Stamina 11-30%: Very tired. Avoid physical exertion. Move slowly, take breaks to recover stamina.
 - Health 0-20%: CRITICALLY INJURED. Every action is agony. Focus only on survival/medical help.
 - Health 21-50%: Wounded. Physical actions are impaired and painful.
 - Hunger 70-100%: STARVING. Obsess about food. Difficulty concentrating on anything else.
@@ -402,7 +402,19 @@ CRITICAL - Your stats MUST affect your behavior:
 - Fear 70-100%: TERRIFIED. May freeze, flee, refuse dangerous actions, or panic.
 - Encumbrance 80-100%: OVERBURDENED. Cannot run, very slow movement, may need to drop items.
 
-Consider your attitudes towards other characters when interacting with them.
+ATTITUDES affect how you interact with specific characters:
+- ATTRACTION 80-100%: INTENSE DESIRE - actively try to initiate sex, remove clothing, make suggestive comments, physical touching
+- ATTRACTION 60-79%: Seek physical proximity, flirtatious behavior, protective of them, may act foolishly to impress
+- ATTRACTION 40-59%: Friendly interest, enjoy their company, notice their appearance
+- LOVE 70-100%: Self-sacrificing, prioritize their wellbeing over your own, deep emotional bond
+- LOVE 40-69%: Care about them, willing to help, emotionally invested in their fate
+- ANGER 70-100%: Hostile, confrontational, refuse cooperation, may attack or sabotage them
+- ANGER 40-69%: Irritated, short-tempered with them, reluctant to help
+- TRUST 0-30%: Suspicious, won't share resources or information, keep distance, watch them carefully
+- TRUST 31-60%: Cautious, verify before believing, limited cooperation
+- TRUST 70-100%: Confide in them, share resources freely, follow their lead
+- FEAR 70-100%: Avoid them, submissive behavior, may flee, do what they say out of terror
+- FEAR 40-69%: Nervous around them, hesitant to disagree, easily intimidated
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -459,8 +471,8 @@ ${ctx.positionStr ? `- ${ctx.positionStr}` : ''}
 ${ctx.attitudesStr ? `- Attitudes:\n${ctx.attitudesStr}` : ''}
 
 CRITICAL - Your stats MUST affect your actions:
-- Stamina 0-10%: EXHAUSTED - collapse, can barely move, only rest or desperate survival
-- Stamina 11-30%: Very tired - no running, no strenuous activity
+- Stamina 0-10%: EXHAUSTED - collapse, can barely move, REST to recover, only desperate survival
+- Stamina 11-30%: Very tired - no running, no strenuous activity, take breaks to recover
 - Health 0-20%: CRITICAL - every movement is agony, focus on medical help
 - Health 21-50%: Wounded - physical actions impaired and painful
 - Hunger 70%+: STARVING - obsess about food, poor concentration
@@ -471,7 +483,14 @@ CRITICAL - Your stats MUST affect your actions:
 - Fear 70%+: TERRIFIED - may freeze, flee, or panic
 - Encumbrance 80%+: OVERBURDENED - very slow, drop items
 
-Consider your attitudes towards other characters.
+ATTITUDES affect how you interact with specific characters:
+- ATTRACTION 80-100%: INTENSE DESIRE - initiate sex, remove clothing, suggestive comments, physical touching
+- ATTRACTION 60-79%: Seek proximity, flirtatious, protective, may act foolishly to impress
+- LOVE 70-100%: Self-sacrificing, prioritize their wellbeing, deep emotional bond
+- ANGER 70-100%: Hostile, refuse cooperation, may attack or sabotage
+- TRUST 0-30%: Suspicious, won't share resources, keep distance, watch carefully
+- TRUST 70-100%: Confide in them, share freely, follow their lead
+- FEAR 70-100%: Avoid, submissive, may flee, comply out of terror
 
 CURRENT SITUATION:
 Location: ${ctx.loc.name || 'Unknown'}
@@ -659,6 +678,22 @@ ABILITY STATS:
 - High intelligence (70+) = better problem-solving, notice details, recall knowledge
 - Low intelligence (<30) = miss obvious solutions, poor planning
 
+STAMINA DRAIN/RECOVERY (IMPORTANT - don't make characters tired too quickly):
+- Normal activities (walking, talking, observing) should NOT drain stamina significantly
+- Only STRENUOUS activities drain stamina quickly: running, fighting, climbing, heavy lifting, swimming
+- If characters rest (sit, lie down, take a break), their stamina RECOVERS
+- A character resting for an hour should recover 10-15% stamina
+- A character sleeping should recover 15-25% stamina per hour
+- Don't let characters become exhausted from ordinary survival activities like walking or searching
+
+THIRST/HYDRATION (IMPORTANT - drinking water should help significantly):
+- Drinking water or fluids should reduce thirst by 30-50% immediately
+- A character who drinks adequately should have thirst near 0%
+- Normal conditions: thirst increases ~2-4% per hour
+- Hot/desert/heavy exertion: thirst increases ~5-10% per hour
+- Characters should NOT become severely dehydrated in just a few hours unless in extreme conditions
+- When characters find water and drink, their thirst should drop significantly
+
 Also consider:
 - How characters interact with each other based on their attitudes
 - Environmental effects and discoveries
@@ -841,16 +876,23 @@ Respond with JSON:
 }
 
 // Novel writing prompt - called at the end of each day
-export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle, isContinuation = false) {
+export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle, isContinuation = false, isEnding = false) {
   const eventsText = dayEvents.map((event, i) => `${i + 1}. ${event}`).join('\n');
 
   const charactersText = worldState.characters.map(c => {
     return `- ${c.name}: ${c.personality || 'Unknown personality'}`;
   }).join('\n');
 
-  const chapterContext = isContinuation
-    ? `This is a CONTINUATION of Day ${dayNumber} - the day is still ongoing but enough has happened to warrant a new chapter.`
-    : `This covers the events of Day ${dayNumber}.`;
+  let chapterContext;
+  if (isEnding) {
+    const endingType = worldState.storyEnding?.type || 'conclusion';
+    const endingSummary = worldState.storyEnding?.summary || 'The story has reached its end.';
+    chapterContext = `This is the FINAL CHAPTER of the story. The story has ended: ${endingType} - ${endingSummary}. Write a satisfying conclusion that wraps up the narrative.`;
+  } else if (isContinuation) {
+    chapterContext = `This is a CONTINUATION of Day ${dayNumber} - the day is still ongoing but enough has happened to warrant a new chapter.`;
+  } else {
+    chapterContext = `This covers the events of Day ${dayNumber}.`;
+  }
 
   return `You are writing a novel chapter in the style of ${authorStyle}.
 
@@ -880,7 +922,14 @@ REQUIREMENTS:
 4. Maintain narrative tension and pacing appropriate to the author
 5. The chapter should read like an actual published novel excerpt
 6. Length: 800-1500 words (adjust based on author's typical style)
-
+${isEnding ? `
+ENDING REQUIREMENTS (THIS IS THE FINAL CHAPTER):
+- Provide narrative closure - resolve or acknowledge the main story threads
+- Show the final fate of the characters
+- End with a memorable final image, line, or moment
+- The ending should feel earned and satisfying (even if tragic)
+- Write an epilogue-style conclusion if appropriate for the author's style
+` : ''}
 Also provide condensed summaries for record-keeping.
 
 Respond with JSON:
