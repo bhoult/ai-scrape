@@ -621,7 +621,8 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     try {
       const result = await queryLLMJSON(prompt, { model: this.models.dm, role: 'verify-state' });
-      return result.parsed?.characterUpdates || [];
+      // Keys are lowercase after normalizeKeys in queryLLMJSON
+      return result.parsed?.characterupdates || [];
     } catch (err) {
       console.error('Error verifying character states:', err.message);
       return [];
@@ -1326,23 +1327,23 @@ Respond with ONLY a JSON object:
 
     turnLogs.push(resolution.llmLog);
 
-    // Log character updates for debugging
-    const charUpdates = resolution.worldChanges?.characterUpdates;
+    // Log character updates for debugging (keys are lowercase after normalizeKeys)
+    const charUpdates = resolution.worldChanges?.characterupdates;
     if (charUpdates && charUpdates.length > 0) {
-      console.log(`[Turn ${this.worldState.turnNumber + 1}] Character updates:`, JSON.stringify(charUpdates, null, 2));
+      console.log(`[Turn ${currentTurn}] Character updates:`, JSON.stringify(charUpdates, null, 2));
     } else {
-      console.log(`[Turn ${this.worldState.turnNumber + 1}] No character updates in response`);
+      console.log(`[Turn ${currentTurn}] No character updates in response`);
     }
 
     this.worldState.applyChanges(resolution.worldChanges);
 
-    // Create player agents for any new characters added this turn
-    if (resolution.worldChanges?.newCharacters && Array.isArray(resolution.worldChanges.newCharacters)) {
-      for (const newChar of resolution.worldChanges.newCharacters) {
+    // Create player agents for any new characters added this turn (keys are lowercase after normalizeKeys)
+    if (resolution.worldChanges?.newcharacters && Array.isArray(resolution.worldChanges.newcharacters)) {
+      for (const newChar of resolution.worldChanges.newcharacters) {
         const addedChar = this.worldState.characters.find(c => c.id === newChar.id);
         if (addedChar && !this.playerAgents.some(agent => agent.character.id === addedChar.id)) {
           this.playerAgents.push(new PlayerAgent(addedChar, this.models.character));
-          console.log(`[Turn ${this.worldState.turnNumber + 1}] Created player agent for new character: ${addedChar.name}`);
+          console.log(`[Turn ${currentTurn}] Created player agent for new character: ${addedChar.name}`);
         }
       }
     }
@@ -1357,8 +1358,9 @@ Respond with ONLY a JSON object:
     // Verify and update character states based on narrative
     const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters, elapsedMinutes);
     if (verifiedUpdates && verifiedUpdates.length > 0) {
-      console.log(`[Turn ${this.worldState.turnNumber + 1}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
-      this.worldState.applyChanges({ characterUpdates: verifiedUpdates });
+      console.log(`[Turn ${currentTurn}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
+      // Use lowercase key to match applyChanges expectations
+      this.worldState.applyChanges({ characterupdates: verifiedUpdates });
     }
 
     // Process stat-based status effects
@@ -1370,7 +1372,7 @@ Respond with ONLY a JSON object:
       // Remove player agents for dead characters
       for (const deadChar of deadCharacters) {
         this.playerAgents = this.playerAgents.filter(agent => agent.character.id !== deadChar.id);
-        console.log(`[Turn ${this.worldState.turnNumber + 1}] Removed player agent for deceased character: ${deadChar.name}`);
+        console.log(`[Turn ${currentTurn}] Removed player agent for deceased character: ${deadChar.name}`);
 
         // Add death to major events
         this.worldState.majorEvents.push(`${deadChar.name} died`);
