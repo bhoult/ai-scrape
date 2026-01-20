@@ -18,6 +18,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORIES_DIR = join(__dirname, '../stories');
 const DRAW_SCRIPT = join(__dirname, '../../draw.py');
 
+// Normalize object keys to lowercase (handles LLMs returning different cases)
+function normalizeKeys(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(normalizeKeys);
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase();
+    normalized[lowerKey] = normalizeKeys(value);
+  }
+  return normalized;
+}
+
 export function listStories() {
   mkdirSync(STORIES_DIR, { recursive: true });
   const entries = readdirSync(STORIES_DIR, { withFileTypes: true });
@@ -622,8 +635,9 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     try {
       const result = await queryLLMJSON(prompt, { model: this.models.dm, role: 'verify-state' });
-      // Keys are lowercase after normalizeKeys in queryLLMJSON
-      return result.parsed?.characterupdates || [];
+      // Normalize keys to lowercase (LLMs return varying cases)
+      const normalized = normalizeKeys(result.parsed || {});
+      return normalized.characterupdates || [];
     } catch (err) {
       console.error('Error verifying character states:', err.message);
       return [];
