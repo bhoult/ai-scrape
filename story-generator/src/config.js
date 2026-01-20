@@ -148,22 +148,12 @@ export const LLM_CONFIG = {
 };
 
 // Default max_tokens if model context is unknown
-export const DEFAULT_MAX_TOKENS = 8192;
+// Note: Fireworks API requires stream=true for max_tokens > 4096, so we cap at 4096
+export const DEFAULT_MAX_TOKENS = 4096;
 
-// Get max output tokens for a model based on its context length
-// Uses up to 1/4 of context for output, capped at 16384
+// Get max output tokens for a model
+// Fireworks API limitation: max_tokens > 4096 requires streaming, so cap at 4096
 export function getMaxTokensForModel(modelKey) {
-  const model = AVAILABLE_MODELS[modelKey];
-  if (!model || !model.context_length || model.context_length === 'Unknown') {
-    return DEFAULT_MAX_TOKENS;
-  }
-
-  // Use 1/4 of context for output, minimum 4096, maximum 16384
-  const contextLength = parseInt(model.context_length, 10);
-  if (isNaN(contextLength)) {
-    return DEFAULT_MAX_TOKENS;
-  }
-
-  const maxTokens = Math.floor(contextLength / 4);
-  return Math.max(4096, Math.min(maxTokens, 16384));
+  // Fireworks non-streaming limit is 4096
+  return 4096;
 }
