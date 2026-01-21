@@ -21,53 +21,138 @@ This document identifies responsibilities currently handled by the LLM that shou
 
 ---
 
+## Design Principle: Hybrid LLM + Deterministic
+
+A fully deterministic system would fail on novel actions (flying, teleporting, magic, swimming underwater, etc.). The solution is a **hybrid approach**:
+
+1. **LLM categorizes** the action into predefined intensity levels
+2. **System calculates** the actual stat changes using fixed rates
+3. **System validates** the results are within bounds
+
+This gives us:
+- Flexibility for any action type (LLM judges intensity)
+- Consistency in calculations (system applies fixed rates)
+- No impossible values (system enforces bounds)
+
+---
+
 ## High Priority Recommendations
 
-### 1. Automatic Stat Drain/Recovery
+### 1. Hybrid Stat Changes (LLM Categorizes, System Calculates)
 
-**Problem**: LLM is asked to estimate stat changes but is inconsistent.
+**Problem**: LLM estimates stat changes directly and is inconsistent.
 
-**Current**: `verifyCharacterStates()` asks LLM to update stats based on narrative.
+**Current**: `verifyCharacterStates()` asks LLM to provide exact stat values.
 
-**Recommendation**: Calculate stats deterministically based on `durationMinutes` and action keywords.
+**Recommendation**: LLM provides action intensity category, system calculates values.
+
+#### DM Response Format (New)
 
 ```javascript
-// Proposed: calculateStatChanges(character, narrative, durationMinutes)
+// Instead of asking LLM to calculate stats, ask for activity classification
+"characterUpdates": [
+  {
+    "id": "sarah",
+    "activityLevel": "strenuous",  // rest | light | moderate | strenuous | extreme
+    "hydrationEvent": "drinking",   // null | "drinking" | "dehydrating" (vomiting, bleeding)
+    "nutritionEvent": null,         // null | "eating" | "vomiting"
+    "healthEvent": null,            // null | "injured" | "healing" | "resting"
+    "mentalEvent": null,            // null | "stressed" | "relieved" | "terrified" | "enraged"
+    // ... other fields unchanged
+  }
+]
+```
 
-// Stamina
+#### System Calculation
+
+```javascript
+// Proposed: calculateStatChanges(character, update, durationMinutes, environment)
+
 const hours = durationMinutes / 60;
-if (narrative.match(/sleep|slept|sleeping/i)) {
-  stamina += 20 * hours;  // +20% per hour sleeping
-} else if (narrative.match(/rest|resting|sat down|taking a break/i)) {
-  stamina += 10 * hours;  // +10% per hour resting
-} else if (narrative.match(/run|running|sprint|fled|fleeing|fought|fighting/i)) {
-  stamina -= 15 * hours;  // -15% per hour strenuous
-} else if (narrative.match(/walk|walking|searching|exploring/i)) {
-  stamina -= 3 * hours;   // -3% per hour moderate
+
+// STAMINA - based on activity level (LLM categorizes, system calculates)
+const STAMINA_RATES = {
+  rest: +20,      // Sleeping/resting: +20% per hour
+  light: +5,      // Sitting, light activity: +5% per hour
+  moderate: -3,   // Walking, searching: -3% per hour
+  strenuous: -12, // Running, fighting, climbing: -12% per hour
+  extreme: -25    // Sprinting, intense combat, flying: -25% per hour
+};
+const staminaRate = STAMINA_RATES[update.activityLevel] || STAMINA_RATES.moderate;
+character.stats.stamina += staminaRate * hours;
+
+// THIRST - base rate + environment + activity modifier
+const isHot = environment.temperature > 30;
+const baseThirstRate = isHot ? 5 : 3;  // % per hour
+const activityMultiplier = { rest: 0.5, light: 0.8, moderate: 1, strenuous: 1.5, extreme: 2 };
+character.stats.thirst += baseThirstRate * (activityMultiplier[update.activityLevel] || 1) * hours;
+
+// Hydration events (drinking/dehydrating)
+if (update.hydrationEvent === 'drinking') {
+  character.stats.thirst -= 35;
+} else if (update.hydrationEvent === 'dehydrating') {
+  character.stats.thirst += 20;
 }
 
-// Thirst (always increases, faster in heat/exertion)
-const isHot = environment.temperature?.includes('hot');
-const isExerting = narrative.match(/run|fight|climb|dig/i);
-const thirstRate = (isHot || isExerting) ? 7 : 3;  // % per hour
-thirst += thirstRate * hours;
+// HUNGER - slower, based on activity
+const hungerRate = { rest: 1, light: 2, moderate: 3, strenuous: 5, extreme: 8 };
+character.stats.hunger += (hungerRate[update.activityLevel] || 3) * hours;
 
-// Hunger (always increases with activity)
-hunger += 3 * hours;
-
-// Drinking/Eating (check inventory changes)
-if (inventoryRemove.some(item => item.match(/water|canteen|bottle/i))) {
-  thirst -= 40;  // Drinking reduces thirst
+if (update.nutritionEvent === 'eating') {
+  character.stats.hunger -= 40;
+} else if (update.nutritionEvent === 'vomiting') {
+  character.stats.hunger += 15;
 }
-if (inventoryRemove.some(item => item.match(/food|bar|ration|meat/i))) {
-  hunger -= 35;  // Eating reduces hunger
+
+// HEALTH - injuries and healing
+if (update.healthEvent === 'injured') {
+  // LLM should also provide injury severity: minor/moderate/severe
+  const damage = { minor: 5, moderate: 15, severe: 30 };
+  character.stats.health -= damage[update.injurySeverity] || 10;
+} else if (update.healthEvent === 'healing' || update.healthEvent === 'resting') {
+  character.stats.health += 2 * hours;  // Slow recovery
+}
+
+// MENTAL STATS - based on events
+const MENTAL_EFFECTS = {
+  stressed:   { sanity: -3, fear: +5, anger: +3 },
+  relieved:   { sanity: +5, fear: -10, anger: -5 },
+  terrified:  { sanity: -8, fear: +25, anger: 0 },
+  enraged:    { sanity: -5, fear: -5, anger: +30 },
+  calm:       { sanity: +3, fear: -3, anger: -3 }
+};
+if (update.mentalEvent && MENTAL_EFFECTS[update.mentalEvent]) {
+  const effects = MENTAL_EFFECTS[update.mentalEvent];
+  character.stats.sanity += effects.sanity;
+  character.stats.fear += effects.fear;
+  character.stats.anger += effects.anger;
+}
+
+// ALWAYS clamp to valid range
+for (const stat of Object.keys(character.stats)) {
+  character.stats[stat] = Math.max(0, Math.min(100, character.stats[stat]));
 }
 ```
 
+#### Why This Works for Novel Actions
+
+| Action | LLM Categorizes As | System Applies |
+|--------|-------------------|----------------|
+| Walking | moderate | -3% stamina/hr, +3% thirst/hr |
+| Flying (magic) | extreme | -25% stamina/hr, +6% thirst/hr |
+| Teleporting | light | +5% stamina/hr (not tiring) |
+| Swimming | strenuous | -12% stamina/hr, +5% thirst/hr |
+| Meditating | rest | +20% stamina/hr |
+| Vehicle travel | light | +5% stamina/hr |
+
+The LLM uses judgment to categorize any action into a known intensity level. The system applies consistent, tested rates for that level.
+
 **Benefits**:
-- Consistent progression across all turns
-- No LLM hallucination of impossible values
-- Predictable survival mechanics
+- Handles any action type (LLM judges intensity)
+- Consistent calculations (same intensity = same rates)
+- No impossible values (system clamps results)
+- Testable (can unit test the calculation logic)
+- Reduced prompt complexity (LLM picks from 5 categories, not infinite values)
 
 ---
 
