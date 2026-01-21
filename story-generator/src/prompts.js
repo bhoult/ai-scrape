@@ -30,6 +30,20 @@ Your role:
 - Describe characters' visible actions and speech, not their internal thoughts
 - Ensure the story progresses toward meaningful resolution while allowing for surprises
 
+Your creative authority - you can introduce:
+- New characters (NPCs, creatures, rescuers, threats, etc.)
+- New map locations and features (shelter, water sources, hazards, etc.)
+- New objects and items (supplies, tools, obstacles, etc.)
+- Environmental changes (weather, time of day, natural events)
+- Encounters and events that challenge or aid the characters
+
+Character limitations - characters can only:
+- Use, combine, or modify existing items in their inventory
+- Travel to known locations or explore in directions
+- Interact with what exists in the world
+- Attempt to craft/build from materials they have (you decide success/failure)
+- Characters CANNOT create things from nothing or discover things you haven't placed
+
 Always respond in the specified JSON format.`;
 
 export const PLAYER_SYSTEM_PROMPT = `You are playing a character in an interactive story. Stay in character and make decisions that fit your personality and goals.
@@ -292,7 +306,7 @@ function buildVisibleFeaturesText(worldState) {
       const dy = charPos.y - feature.position.y;
       const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
       const direction = getDirection(dx, dy);
-      return `  - ${feature.name} (${feature.type}) ~${distance}m to the ${direction}${feature.discovered ? ' [DISCOVERED]' : ''}`;
+      return `  - ${feature.name} (${feature.type}) ~${distance}m to the ${direction}${feature.discovered ? ' [DISCOVERED]' : ''} - REACHABLE this turn`;
     });
 
     if (visibleFeatures.length > 0) {
@@ -301,7 +315,43 @@ function buildVisibleFeaturesText(worldState) {
     }
   }
 
-  return lines.length > 0 ? lines.join('\n') : 'No features currently visible to any character.';
+  return lines.length > 0 ? lines.join('\n') : 'No features currently visible to any character (all features are too far away).';
+}
+
+// Build text showing all map features with distances for context
+function buildAllFeaturesText(worldState) {
+  if (!worldState.mapFeatures || worldState.mapFeatures.length === 0) {
+    return '';
+  }
+
+  // Calculate average character position
+  const chars = worldState.characters || [];
+  if (chars.length === 0) return '';
+
+  let avgX = 0, avgY = 0;
+  for (const char of chars) {
+    avgX += (char.position?.x || 0);
+    avgY += (char.position?.y || 0);
+  }
+  avgX /= chars.length;
+  avgY /= chars.length;
+
+  const features = worldState.mapFeatures.map(feature => {
+    const dx = avgX - feature.position.x;
+    const dy = avgY - feature.position.y;
+    const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+    const direction = getDirection(dx, dy);
+    const timeToReach = Math.round(distance / 80); // minutes at walking pace
+    const discovered = feature.discovered ? ' [DISCOVERED]' : '';
+    return { name: feature.name, type: feature.type, distance, direction, timeToReach, discovered };
+  }).sort((a, b) => a.distance - b.distance);
+
+  const lines = ['ALL MAP FEATURES (for planning, NOT immediately reachable unless in VISIBLE section):'];
+  for (const f of features) {
+    lines.push(`  - ${f.name} (${f.type}): ${f.distance}m ${f.direction} (~${f.timeToReach} min walk)${f.discovered}`);
+  }
+
+  return lines.join('\n');
 }
 
 // Get cardinal direction from delta coordinates
@@ -317,6 +367,166 @@ function getDirection(dx, dy) {
   if (angle >= -112.5 && angle < -67.5) return 'south';
   if (angle >= -67.5 && angle < -22.5) return 'southeast';
   return 'unknown';
+}
+
+// Calculate total distance traveled from character paths
+function calculateTotalDistance(positions) {
+  if (!positions || positions.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < positions.length; i++) {
+    const dx = positions[i].x - positions[i - 1].x;
+    const dy = positions[i].y - positions[i - 1].y;
+    total += Math.sqrt(dx * dx + dy * dy);
+  }
+  return Math.round(total);
+}
+
+// Build travel summary text showing distance traveled by each character
+function buildTravelSummaryText(worldState, characterPaths) {
+  if (!characterPaths || Object.keys(characterPaths).length === 0) {
+    return '';
+  }
+
+  const lines = ['TRAVEL SUMMARY:'];
+  for (const char of worldState.characters || []) {
+    const paths = characterPaths[char.id];
+    if (paths && paths.length > 0) {
+      const totalDist = calculateTotalDistance(paths);
+      const startPos = paths[0];
+      const currentPos = paths[paths.length - 1];
+      const directDist = Math.round(Math.sqrt(
+        Math.pow(currentPos.x - startPos.x, 2) + Math.pow(currentPos.y - startPos.y, 2)
+      ));
+      lines.push(`  ${char.name}: traveled ${totalDist}m total, currently ${directDist}m from starting point`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Build text showing discovered locations with distances and directions from each character
+function buildDiscoveredLocationsText(worldState, characterPaths) {
+  const discovered = [];
+
+  // Add discovered map features
+  for (const feature of worldState.mapFeatures || []) {
+    if (feature.discovered && feature.position) {
+      discovered.push({
+        name: feature.name,
+        type: feature.type || 'location',
+        position: feature.position,
+        description: feature.description
+      });
+    }
+  }
+
+  // Add discovered objects from state
+  for (const obj of worldState.discoveredObjects || []) {
+    if (obj.position) {
+      discovered.push({
+        name: obj.name,
+        type: 'object',
+        position: obj.position,
+        description: obj.description
+      });
+    }
+  }
+
+  // Add dead bodies
+  for (const body of worldState.deadBodies || []) {
+    if (body.position) {
+      discovered.push({
+        name: body.name,
+        type: 'dead body',
+        position: body.position,
+        description: body.description
+      });
+    }
+  }
+
+  if (discovered.length === 0) {
+    return 'KNOWN LOCATIONS: None discovered yet.';
+  }
+
+  const lines = ['KNOWN LOCATIONS (discovered features, objects, bodies):'];
+
+  for (const char of worldState.characters || []) {
+    const charPos = char.position || { x: 0, y: 0 };
+    const charLines = [`  From ${char.name}'s position (${charPos.x}, ${charPos.y}):`];
+
+    for (const loc of discovered) {
+      const dx = charPos.x - loc.position.x;
+      const dy = charPos.y - loc.position.y;
+      const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+      const direction = getDirection(dx, dy);
+      const walkTime = Math.round(distance / 80);
+      charLines.push(`    - ${loc.name} (${loc.type}): ${distance}m ${direction} (~${walkTime} min walk) at (${loc.position.x}, ${loc.position.y})`);
+    }
+
+    lines.push(...charLines);
+  }
+
+  return lines.join('\n');
+}
+
+// Build discovered locations text for a specific character
+function buildCharacterDiscoveredLocationsText(character, worldState) {
+  const discovered = [];
+
+  // Add discovered map features
+  for (const feature of worldState.mapFeatures || []) {
+    if (feature.discovered && feature.position) {
+      discovered.push({
+        name: feature.name,
+        type: feature.type || 'location',
+        position: feature.position
+      });
+    }
+  }
+
+  // Add discovered objects from state
+  for (const obj of worldState.discoveredObjects || []) {
+    if (obj.position) {
+      discovered.push({
+        name: obj.name,
+        type: 'object',
+        position: obj.position
+      });
+    }
+  }
+
+  // Add dead bodies
+  for (const body of worldState.deadBodies || []) {
+    if (body.position) {
+      discovered.push({
+        name: body.name,
+        type: 'dead body',
+        position: body.position
+      });
+    }
+  }
+
+  if (discovered.length === 0) {
+    return 'You have not discovered any notable locations yet.';
+  }
+
+  const charPos = character.position || { x: 0, y: 0 };
+  const lines = ['KNOWN LOCATIONS you can navigate to:'];
+
+  // Sort by distance
+  const sorted = discovered.map(loc => {
+    const dx = charPos.x - loc.position.x;
+    const dy = charPos.y - loc.position.y;
+    const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+    const direction = getDirection(dx, dy);
+    return { ...loc, distance, direction };
+  }).sort((a, b) => a.distance - b.distance);
+
+  for (const loc of sorted) {
+    const walkTime = Math.round(loc.distance / 80);
+    lines.push(`  - ${loc.name} (${loc.type}): ${loc.distance}m ${loc.direction} (~${walkTime} min walk)`);
+  }
+
+  return lines.join('\n');
 }
 
 // Phase 1: Think and Talk - Player considers the situation and communicates with nearby characters
@@ -395,6 +605,8 @@ ${ctx.loc.description || 'No description available'}
 Available exits: ${ctx.exits}
 Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}${ctx.discoveredObjectsStr ? `\nDiscovered objects: ${ctx.discoveredObjectsStr}` : ''}
 Others present: ${ctx.others}
+
+${buildCharacterDiscoveredLocationsText(character, worldState)}
 ${observedSection}
 RECENT EVENTS:
 ${ctx.historyText}
@@ -407,6 +619,8 @@ STORY CONTEXT:
 WORLD SUMMARY: ${worldState.summary}
 
 This is the THINK AND TALK phase. Consider what you want to do this turn and communicate with nearby characters (within 20 meters) to coordinate or share information. They will hear what you say before deciding their actions.
+
+Remember: You can only work with what exists (your inventory, known locations, things you can see). You cannot create or discover things - only the DM can introduce new elements to the world.
 
 Respond with JSON:
 {
@@ -483,6 +697,8 @@ ${ctx.loc.description || 'No description available'}
 Available exits: ${ctx.exits}
 Items here: ${ctx.items}${ctx.bodiesHere ? `\nDead bodies: ${ctx.bodiesHere}` : ''}${ctx.discoveredObjectsStr ? `\nDiscovered objects: ${ctx.discoveredObjectsStr}` : ''}
 Others present: ${ctx.others}
+
+${buildCharacterDiscoveredLocationsText(character, worldState)}
 ${dialogueSection}
 RECENT EVENTS:
 ${ctx.historyText}
@@ -490,6 +706,13 @@ ${ctx.historyText}
 WORLD SUMMARY: ${worldState.summary}
 
 This is the ACTION phase. You've heard what nearby characters said. Now decide your final action for this turn.
+
+IMPORTANT - You can only work with what exists:
+- You can use, combine, or modify items in your inventory or at your location
+- You can travel to known locations or explore in a direction
+- You can interact with other characters, objects, or the environment
+- You CANNOT create new items, discover locations, or introduce things that don't exist
+- If you want to craft/build something, describe your attempt - the DM will decide if it succeeds
 
 Respond with JSON:
 {
@@ -499,7 +722,7 @@ Respond with JSON:
 }`;
 }
 
-export function dmResolutionPrompt(worldState, characterActions, characterSpeech = [], dmInstructions = null) {
+export function dmResolutionPrompt(worldState, characterActions, characterSpeech = [], dmInstructions = null, characterPaths = {}) {
   const actionsText = characterActions.map(ca => {
     let text = `${ca.character.name}: ${ca.action}`;
     if (ca.dialogue) {
@@ -605,8 +828,14 @@ CHARACTERS:
 ${charactersText}
 ${deadBodiesText}${discoveredObjectsText}
 
-VISIBLE MAP FEATURES:
+${buildTravelSummaryText(worldState, characterPaths)}
+
+${buildDiscoveredLocationsText(worldState, characterPaths)}
+
+VISIBLE MAP FEATURES (characters can reach/discover these this turn):
 ${visibleFeaturesText}
+
+${buildAllFeaturesText(worldState)}
 
 CHARACTER DIALOGUE THIS TURN:
 ${speechText}
@@ -653,7 +882,8 @@ POSITION TRACKING:
 - Characters have positions in meters (x, y) relative to scene center
 - Update positionChange when characters move significantly
 - Characters within 20 meters can communicate with each other
-- Movement speed: walking ~5m/min, running ~15m/min
+- Movement speed: walking ~80m/min (5km/h), running ~150m/min (9km/h)
+- In a 15-minute turn, characters can walk ~1200m or run ~2250m maximum
 
 DEATH:
 - If a character's health reaches 0%, they DIE
@@ -704,10 +934,19 @@ IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES (e.g., "canteen"
 - Each discovered object has: id, name, description, position (x, y in meters), status
 - These help characters navigate and plan by showing known resources and landmarks
 
+POSITION AND MOVEMENT - CRITICAL RULES:
+- Character positions are in METERS. Walking speed is ~80m per minute, running ~150m per minute.
+- A typical turn (15-30 minutes) allows movement of 1-2km at most if traveling continuously.
+- positionChange values MUST reflect realistic travel distances based on what the character is doing.
+- The narrative MUST match position changes - if characters "reach" a location, their position MUST be updated to that location's coordinates.
+- Characters can ONLY discover/reach features listed in VISIBLE MAP FEATURES below. If a feature is not listed, it is too far away to see or reach this turn.
+- DO NOT write narrative about finding/reaching locations that are not in VISIBLE MAP FEATURES.
+
 MAP FEATURE DISCOVERY:
-- When characters travel or look around, reference visible map features in the narrative
-- If a character moves within 100m of a map feature, they discover it - describe it in detail
+- Characters can ONLY discover features that appear in VISIBLE MAP FEATURES (within visibility range)
+- If a character moves within 100m of a visible map feature, they discover it - describe it in detail
 - Include discovered feature IDs in the discoveredMapFeatures array in worldChanges
+- When discovering a feature, the character's positionChange MUST place them AT or NEAR that feature's coordinates
 - Discovered features should be described vividly when first encountered
 
 MANDATORY - characterUpdates MUST reflect ALL state changes:

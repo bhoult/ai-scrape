@@ -1497,7 +1497,8 @@ Respond with ONLY a JSON object:
       characterActions,
       characterSpeech,
       dmInstructions,
-      currentTurn
+      currentTurn,
+      this.characterPaths
     );
 
     // Defensive check for resolution

@@ -51,8 +51,8 @@ export class DMAgent {
     };
   }
 
-  async resolveActions(worldState, characterActions, characterSpeech = [], dmInstructions = null, turn = null) {
-    const prompt = dmResolutionPrompt(worldState, characterActions, characterSpeech, dmInstructions);
+  async resolveActions(worldState, characterActions, characterSpeech = [], dmInstructions = null, turn = null, characterPaths = {}) {
+    const prompt = dmResolutionPrompt(worldState, characterActions, characterSpeech, dmInstructions, characterPaths);
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,

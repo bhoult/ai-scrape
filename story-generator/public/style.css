@@ -725,6 +725,15 @@ main {
   fill: #fff;
 }
 
+/* Clustered map labels */
+#game-map .map-labels text {
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+  text-shadow: 0 0 8px #000, 0 0 16px #000;
+}
+
 /* Character path colors - use full selector for specificity */
 #game-map .map-paths polyline.char-path-0 { stroke: #4fc3f7; }
 #game-map .map-paths polyline.char-path-1 { stroke: #f472b6; }
@@ -1265,13 +1274,27 @@ h2 {
 }
 
 .story-viewer-body p {
-  margin-bottom: 1rem;
+  margin-bottom: 1em;
   text-align: justify;
+  text-indent: 1.5em;
+  line-height: 1.8;
+}
+
+.story-viewer-body h1 + p,
+.story-viewer-body h2 + p,
+.story-viewer-body hr + p {
+  text-indent: 0;
 }
 
 .story-viewer-body p em {
   color: #888;
   font-style: italic;
+}
+
+.story-viewer-body p:has(> em:only-child) {
+  text-indent: 0;
+  text-align: center;
+  margin-bottom: 1.5rem;
 }
 
 .story-viewer-body hr {
@@ -1871,13 +1894,27 @@ h2 {
 }
 
 .dm-narrative {
-  line-height: 1.7;
+  line-height: 1.8;
   margin-top: 0.75rem;
 }
 
 .dm-narrative .section-header {
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.dm-narrative p {
+  margin: 0 0 0.75em 0;
+  text-indent: 1.5em;
+  text-align: justify;
+}
+
+.dm-narrative p:first-of-type {
+  text-indent: 0;
+}
+
+.dm-narrative p:last-child {
+  margin-bottom: 0;
 }
 
 /* Image Regenerating Overlay */

@@ -175,6 +175,33 @@ function hideLoading() {
   loading.classList.add('hidden');
 }
 
+// Format narrative text as proper paragraphs
+function formatNarrativeText(text) {
+  if (!text) return '';
+
+  // Escape HTML to prevent XSS
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  // Split by double newlines first (explicit paragraphs)
+  let paragraphs = escaped.split(/\n\n+/);
+
+  // If only one paragraph, try splitting by single newlines
+  if (paragraphs.length === 1) {
+    paragraphs = escaped.split(/\n/);
+  }
+
+  // Filter out empty paragraphs and wrap in <p> tags
+  return paragraphs
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
+    .map(p => `<p>${p}</p>`)
+    .join('');
+}
+
 function renderNarrative(narrative, turn, characterActions = null, time = null, thinkTalk = null) {
   const entry = document.createElement('div');
   entry.className = 'narrative-entry';
@@ -282,10 +309,10 @@ function renderNarrative(narrative, turn, characterActions = null, time = null, 
     pollForImage(turn, imageContainer);
   }
 
-  const narrativeP = document.createElement('p');
-  narrativeP.className = 'dm-narrative';
-  narrativeP.innerHTML = '<span class="section-header">Narrative</span>' + narrative;
-  entry.appendChild(narrativeP);
+  const narrativeDiv = document.createElement('div');
+  narrativeDiv.className = 'dm-narrative';
+  narrativeDiv.innerHTML = '<span class="section-header">Narrative</span>' + formatNarrativeText(narrative);
+  entry.appendChild(narrativeDiv);
 
   storyContent.appendChild(entry);
   storyContent.scrollTop = storyContent.scrollHeight;
@@ -865,7 +892,10 @@ function renderMap(state) {
     pathIndex++;
   }
 
-  // Render map features with scaled markers
+  // Collect all labeled items for clustering
+  const labeledItems = [];
+
+  // Render map features with scaled markers (collect labels)
   featuresGroup.innerHTML = '';
   if (state.mapFeatures && state.mapFeatures.length > 0) {
     for (const feature of state.mapFeatures) {
@@ -882,12 +912,6 @@ function renderMap(state) {
       circle.style.strokeWidth = 20 * markerScale;
       g.appendChild(circle);
 
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('y', 280 * markerScale);
-      text.setAttribute('font-size', 200 * markerScale);
-      text.textContent = feature.name || feature.id;
-      g.appendChild(text);
-
       // Tooltip on hover
       g.addEventListener('mouseenter', (e) => {
         const desc = feature.discovered ? feature.description : 'Undiscovered';
@@ -895,13 +919,24 @@ function renderMap(state) {
       });
 
       featuresGroup.appendChild(g);
+
+      // Collect for label clustering (only if discovered)
+      if (feature.discovered) {
+        labeledItems.push({
+          x: feature.position.x,
+          y: feature.position.y + 280 * markerScale,
+          label: feature.name || feature.id,
+          fontSize: 200,
+          type: 'feature'
+        });
+      }
     }
   }
 
   // Render objects (dead bodies and discovered objects) with scaled markers
   objectsGroup.innerHTML = '';
 
-  // Render dead bodies
+  // Render dead bodies (collect labels)
   if (state.deadBodies && state.deadBodies.length > 0) {
     for (const body of state.deadBodies) {
       if (!body.position) continue;
@@ -916,23 +951,25 @@ function renderMap(state) {
       circle.style.strokeWidth = 15 * markerScale;
       g.appendChild(circle);
 
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('y', 180 * markerScale);
-      text.setAttribute('font-size', 140 * markerScale);
-      // Extract original name from "dead body of X"
-      const name = body.originalCharacter?.name || body.name.replace('dead body of ', '');
-      text.textContent = '☠ ' + name.split(' ')[0];
-      g.appendChild(text);
-
       g.addEventListener('mouseenter', () => {
         g.setAttribute('title', body.name);
       });
 
       objectsGroup.appendChild(g);
+
+      // Collect for label clustering
+      const name = body.originalCharacter?.name || body.name.replace('dead body of ', '');
+      labeledItems.push({
+        x: body.position.x,
+        y: body.position.y + 180 * markerScale,
+        label: '☠' + name.split(' ')[0],
+        fontSize: 140,
+        type: 'dead-body'
+      });
     }
   }
 
-  // Render discovered objects
+  // Render discovered objects (collect labels)
   if (state.discoveredObjects && state.discoveredObjects.length > 0) {
     for (const obj of state.discoveredObjects) {
       if (!obj.position) continue;
@@ -947,21 +984,24 @@ function renderMap(state) {
       circle.style.strokeWidth = 15 * markerScale;
       g.appendChild(circle);
 
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('y', 160 * markerScale);
-      text.setAttribute('font-size', 120 * markerScale);
-      text.textContent = obj.name || obj.id;
-      g.appendChild(text);
-
       g.addEventListener('mouseenter', () => {
         g.setAttribute('title', `${obj.name}: ${obj.description || 'No description'}`);
       });
 
       objectsGroup.appendChild(g);
+
+      // Collect for label clustering
+      labeledItems.push({
+        x: obj.position.x,
+        y: obj.position.y + 160 * markerScale,
+        label: obj.name || obj.id,
+        fontSize: 120,
+        type: 'object'
+      });
     }
   }
 
-  // Render characters with scaled markers
+  // Render characters with scaled markers (collect labels)
   charactersGroup.innerHTML = '';
   if (state.characters && state.characters.length > 0) {
     for (const char of state.characters) {
@@ -977,14 +1017,98 @@ function renderMap(state) {
       circle.style.strokeWidth = 30 * markerScale;
       g.appendChild(circle);
 
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('y', 220 * markerScale);
-      text.setAttribute('font-size', 160 * markerScale);
-      text.textContent = char.name ? char.name.split(' ')[0] : '?';
-      g.appendChild(text);
-
       charactersGroup.appendChild(g);
+
+      // Collect for label clustering
+      labeledItems.push({
+        x: pos.x,
+        y: pos.y + 220 * markerScale,
+        label: char.name ? char.name.split(' ')[0] : '?',
+        fontSize: 160,
+        type: 'character'
+      });
     }
+  }
+
+  // Cluster nearby labels and render combined text
+  renderClusteredLabels(labeledItems, markerScale);
+}
+
+// Cluster nearby labels and render as combined text elements
+function renderClusteredLabels(items, markerScale) {
+  if (items.length === 0) return;
+
+  // Get or create labels group
+  let labelsGroup = gameMap.querySelector('.map-labels');
+  if (!labelsGroup) {
+    labelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    labelsGroup.classList.add('map-labels');
+    gameMap.appendChild(labelsGroup);
+  }
+  labelsGroup.innerHTML = '';
+
+  // Clustering threshold - items within this distance will be grouped
+  const clusterThreshold = 300 * markerScale;
+
+  // Simple clustering: assign each item to a cluster
+  const clusters = [];
+  const assigned = new Set();
+
+  for (let i = 0; i < items.length; i++) {
+    if (assigned.has(i)) continue;
+
+    const cluster = [items[i]];
+    assigned.add(i);
+
+    // Find all items within threshold distance
+    for (let j = i + 1; j < items.length; j++) {
+      if (assigned.has(j)) continue;
+
+      const dx = items[i].x - items[j].x;
+      const dy = items[i].y - items[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist <= clusterThreshold) {
+        cluster.push(items[j]);
+        assigned.add(j);
+      }
+    }
+
+    clusters.push(cluster);
+  }
+
+  // Render each cluster as a single text element
+  for (const cluster of clusters) {
+    // Calculate cluster center (average position)
+    let sumX = 0, sumY = 0, maxFontSize = 0;
+    const labels = [];
+
+    for (const item of cluster) {
+      sumX += item.x;
+      sumY += item.y;
+      maxFontSize = Math.max(maxFontSize, item.fontSize);
+      labels.push(item.label);
+    }
+
+    const centerX = sumX / cluster.length;
+    const centerY = sumY / cluster.length;
+
+    // Create combined label text
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', centerX);
+    text.setAttribute('y', centerY);
+    text.setAttribute('font-size', maxFontSize * markerScale);
+    text.dataset.baseFontSize = maxFontSize; // Store for zoom updates
+    text.classList.add('map-label');
+
+    // Join labels with comma, or show count if too many
+    if (labels.length <= 3) {
+      text.textContent = labels.join(', ');
+    } else {
+      text.textContent = labels.slice(0, 2).join(', ') + ' +' + (labels.length - 2);
+    }
+
+    labelsGroup.appendChild(text);
   }
 }
 
@@ -1114,15 +1238,10 @@ function applyMapTransform() {
 function updateMarkerSizes(viewWidth) {
   const markerScale = viewWidth / baseViewWidth;
 
-  // Update feature markers
+  // Update feature markers (circles only, text is in labels group)
   gameMap.querySelectorAll('.map-feature').forEach(g => {
     const circle = g.querySelector('circle');
-    const text = g.querySelector('text');
     if (circle) circle.setAttribute('r', 150 * markerScale);
-    if (text) {
-      text.setAttribute('y', 280 * markerScale);
-      text.setAttribute('font-size', 200 * markerScale);
-    }
   });
 
   // Update feature circle stroke width
@@ -1130,15 +1249,10 @@ function updateMarkerSizes(viewWidth) {
     circle.style.strokeWidth = 20 * markerScale;
   });
 
-  // Update character markers
+  // Update character markers (circles only, text is in labels group)
   gameMap.querySelectorAll('.map-character').forEach(g => {
     const circle = g.querySelector('circle');
-    const text = g.querySelector('text');
     if (circle) circle.setAttribute('r', 120 * markerScale);
-    if (text) {
-      text.setAttribute('y', 220 * markerScale);
-      text.setAttribute('font-size', 160 * markerScale);
-    }
   });
 
   // Update character circle stroke width
@@ -1146,36 +1260,37 @@ function updateMarkerSizes(viewWidth) {
     circle.style.strokeWidth = 30 * markerScale;
   });
 
-  // Update object markers (dead bodies and discovered objects)
+  // Update object markers (circles only, text is in labels group)
   gameMap.querySelectorAll('.map-object.dead-body').forEach(g => {
     const circle = g.querySelector('circle');
-    const text = g.querySelector('text');
     if (circle) {
       circle.setAttribute('r', 100 * markerScale);
       circle.style.strokeWidth = 15 * markerScale;
-    }
-    if (text) {
-      text.setAttribute('y', 180 * markerScale);
-      text.setAttribute('font-size', 140 * markerScale);
     }
   });
 
   gameMap.querySelectorAll('.map-object.discovered-object').forEach(g => {
     const circle = g.querySelector('circle');
-    const text = g.querySelector('text');
     if (circle) {
       circle.setAttribute('r', 80 * markerScale);
       circle.style.strokeWidth = 15 * markerScale;
-    }
-    if (text) {
-      text.setAttribute('y', 160 * markerScale);
-      text.setAttribute('font-size', 120 * markerScale);
     }
   });
 
   // Update path stroke width
   gameMap.querySelectorAll('.map-paths polyline').forEach(polyline => {
     polyline.style.strokeWidth = 40 * markerScale;
+  });
+
+  // Update clustered label font sizes
+  gameMap.querySelectorAll('.map-labels text').forEach(text => {
+    // Get original base font size from data attribute, or default to 160
+    let baseFontSize = parseFloat(text.dataset.baseFontSize);
+    if (!baseFontSize) {
+      baseFontSize = 160;
+      text.dataset.baseFontSize = baseFontSize;
+    }
+    text.setAttribute('font-size', baseFontSize * markerScale);
   });
 }
 
@@ -2032,9 +2147,10 @@ async function loadStory(storyId) {
           entry.appendChild(imageContainer);
           checkForExistingImage(turn, imageContainer);
 
-          const narrativeP = document.createElement('p');
-          narrativeP.textContent = narrative;
-          entry.appendChild(narrativeP);
+          const narrativeDiv = document.createElement('div');
+          narrativeDiv.className = 'dm-narrative';
+          narrativeDiv.innerHTML = formatNarrativeText(narrative);
+          entry.appendChild(narrativeDiv);
 
           storyContent.appendChild(entry);
         }
@@ -2385,28 +2501,49 @@ function downloadNovel(storyId) {
 }
 
 function renderNovelMarkdown(markdown) {
-  // Simple markdown rendering for the novel
+  // Markdown rendering that groups consecutive lines into paragraphs
   let html = '';
   const lines = markdown.split('\n');
+  let paragraphBuffer = [];
+
+  // Flush accumulated paragraph lines as a single <p>
+  const flushParagraph = () => {
+    if (paragraphBuffer.length > 0) {
+      const text = paragraphBuffer.join(' ').trim();
+      if (text) {
+        html += `<p>${escapeHtml(text)}</p>`;
+      }
+      paragraphBuffer = [];
+    }
+  };
 
   for (const line of lines) {
+    const trimmed = line.trim();
+
     if (line.startsWith('# ')) {
+      flushParagraph();
       html += `<h1>${escapeHtml(line.substring(2))}</h1>`;
     } else if (line.startsWith('## ')) {
+      flushParagraph();
       html += `<h2>${escapeHtml(line.substring(3))}</h2>`;
     } else if (line.startsWith('---')) {
+      flushParagraph();
       html += '<hr>';
-    } else if (line.startsWith('*') && line.endsWith('*') && !line.startsWith('**')) {
+    } else if (trimmed.startsWith('*') && trimmed.endsWith('*') && !trimmed.startsWith('**') && trimmed.length > 2) {
       // Italics line (like the author style line)
-      html += `<p><em>${escapeHtml(line.slice(1, -1))}</em></p>`;
-    } else if (line.trim() === '') {
-      // Empty line
-      html += '';
+      flushParagraph();
+      html += `<p><em>${escapeHtml(trimmed.slice(1, -1))}</em></p>`;
+    } else if (trimmed === '') {
+      // Empty line marks paragraph break
+      flushParagraph();
     } else {
-      // Regular paragraph
-      html += `<p>${escapeHtml(line)}</p>`;
+      // Accumulate regular text lines into paragraph
+      paragraphBuffer.push(trimmed);
     }
   }
+
+  // Flush any remaining paragraph
+  flushParagraph();
 
   return html;
 }
