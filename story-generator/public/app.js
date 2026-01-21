@@ -1,17 +1,19 @@
 const seedInput = document.getElementById('seed');
 const startBtn = document.getElementById('start-btn');
 const turnBtn = document.getElementById('turn-btn');
-const turnCounter = document.getElementById('turn-counter');
-const timeDisplay = document.getElementById('time-display');
+const statusLine = document.getElementById('status-line');
 const dmControls = document.getElementById('dm-controls');
 const dmInstructionsInput = document.getElementById('dm-instructions');
 const storyContent = document.getElementById('story-content');
 const worldState = document.getElementById('world-state');
-const llmLog = document.getElementById('llm-log');
 const loading = document.getElementById('loading');
 const menuBtn = document.getElementById('menu-btn');
 const storyMenu = document.getElementById('story-menu');
 const menuCloseBtn = document.getElementById('menu-close-btn');
+const llmLogBtn = document.getElementById('llm-log-btn');
+const llmLogMenu = document.getElementById('llm-log-menu');
+const llmLogCloseBtn = document.getElementById('llm-log-close-btn');
+const llmLogList = document.getElementById('llm-log-list');
 const storyList = document.getElementById('story-list');
 const generateImagesCheckbox = document.getElementById('generate-images-checkbox');
 const turnCountInput = document.getElementById('turn-count');
@@ -27,12 +29,25 @@ const dmAuthorStyleInput = document.getElementById('dm-author-style');
 const characterAuthorStyleInput = document.getElementById('character-author-style');
 const characterDisplay = document.getElementById('character-display');
 const writeChapterBtn = document.getElementById('write-chapter-btn');
+const turnProgress = document.getElementById('turn-progress');
+const progressText = document.getElementById('progress-text');
+const cancelProgressBtn = document.getElementById('cancel-progress-btn');
+const mapContainer = document.getElementById('map-container');
+const gameMap = document.getElementById('game-map');
+const storySection = document.getElementById('story-section');
+const storyResizeHandle = document.getElementById('story-resize-handle');
 
 let currentTurn = 0;
 let currentStoryId = null;
 let availableModels = {};
 let defaultModel = null;
 let previousCharacterStats = {}; // Track previous stats for change indicators
+let characterPaths = {}; // Character position history for map paths (from server)
+
+// Map pan/zoom state
+let mapTransform = { x: 0, y: 0, scale: 1 };
+let isDragging = false;
+let dragStart = { x: 0, y: 0 };
 
 // Load available models on startup
 async function loadModels() {
@@ -145,6 +160,11 @@ function formatTime(time) {
   const hour = time.hour.toString().padStart(2, '0');
   const minute = time.minute.toString().padStart(2, '0');
   return `Day ${time.day}, ${hour}:${minute}`;
+}
+
+function updateStatusLine(turn, time) {
+  const timeStr = formatTime(time);
+  statusLine.textContent = timeStr ? `Turn ${turn} · ${timeStr}` : `Turn ${turn}`;
 }
 
 function showLoading() {
@@ -478,10 +498,11 @@ async function deleteFromTurn(turn) {
 
     // Update UI state
     currentTurn = data.turn;
-    turnCounter.textContent = `Turn: ${currentTurn}`;
-    timeDisplay.textContent = formatTime(data.worldState.time);
+    updateStatusLine(currentTurn, data.worldState.time);
     renderWorldState(data.worldState);
     renderCharacterDisplay(data.worldState.characters);
+    characterPaths = data.characterPaths || {};
+    renderMap(data.worldState);
 
     console.log(`[Frontend] Deleted. Now at turn ${data.turn}`);
   } catch (error) {
@@ -695,6 +716,518 @@ function renderWorldState(state) {
 
   worldState.innerHTML = html;
 }
+
+// Store base map bounds for pan/zoom calculations
+let mapBounds = { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 };
+let baseViewWidth = 2000; // Store the base view width for marker scaling
+
+// Render the SVG map with features, characters, and paths
+function renderMap(state) {
+  if (!state) {
+    mapContainer.querySelector('.placeholder').style.display = 'block';
+    return;
+  }
+
+  mapContainer.querySelector('.placeholder').style.display = 'none';
+
+  const gridGroup = gameMap.querySelector('.map-grid');
+  const pathsGroup = gameMap.querySelector('.map-paths');
+  const featuresGroup = gameMap.querySelector('.map-features');
+  const objectsGroup = gameMap.querySelector('.map-objects');
+  const charactersGroup = gameMap.querySelector('.map-characters');
+
+  // Calculate bounds for viewBox
+  let minX = -1000, maxX = 1000, minY = -1000, maxY = 1000;
+
+  // Include map features in bounds
+  if (state.mapFeatures && state.mapFeatures.length > 0) {
+    for (const feature of state.mapFeatures) {
+      if (feature.position) {
+        minX = Math.min(minX, feature.position.x - 500);
+        maxX = Math.max(maxX, feature.position.x + 500);
+        minY = Math.min(minY, feature.position.y - 500);
+        maxY = Math.max(maxY, feature.position.y + 500);
+      }
+    }
+  }
+
+  // Include characters in bounds
+  if (state.characters && state.characters.length > 0) {
+    for (const char of state.characters) {
+      if (char.position) {
+        minX = Math.min(minX, char.position.x - 500);
+        maxX = Math.max(maxX, char.position.x + 500);
+        minY = Math.min(minY, char.position.y - 500);
+        maxY = Math.max(maxY, char.position.y + 500);
+      }
+    }
+  }
+
+  // Include dead bodies in bounds
+  if (state.deadBodies && state.deadBodies.length > 0) {
+    for (const body of state.deadBodies) {
+      if (body.position) {
+        minX = Math.min(minX, body.position.x - 300);
+        maxX = Math.max(maxX, body.position.x + 300);
+        minY = Math.min(minY, body.position.y - 300);
+        maxY = Math.max(maxY, body.position.y + 300);
+      }
+    }
+  }
+
+  // Include discovered objects in bounds
+  if (state.discoveredObjects && state.discoveredObjects.length > 0) {
+    for (const obj of state.discoveredObjects) {
+      if (obj.position) {
+        minX = Math.min(minX, obj.position.x - 300);
+        maxX = Math.max(maxX, obj.position.x + 300);
+        minY = Math.min(minY, obj.position.y - 300);
+        maxY = Math.max(maxY, obj.position.y + 300);
+      }
+    }
+  }
+
+  // Include paths in bounds
+  for (const charId in characterPaths) {
+    for (const pos of characterPaths[charId]) {
+      minX = Math.min(minX, pos.x - 200);
+      maxX = Math.max(maxX, pos.x + 200);
+      minY = Math.min(minY, pos.y - 200);
+      maxY = Math.max(maxY, pos.y + 200);
+    }
+  }
+
+  // Add padding
+  const padding = 500;
+  minX -= padding;
+  maxX += padding;
+  minY -= padding;
+  maxY += padding;
+
+  // Store base bounds
+  mapBounds = { minX, maxX, minY, maxY };
+  baseViewWidth = maxX - minX; // Store for marker scaling
+
+  // Apply pan/zoom transform to viewBox
+  const baseWidth = maxX - minX;
+  const baseHeight = maxY - minY;
+  const viewWidth = baseWidth / mapTransform.scale;
+  const viewHeight = baseHeight / mapTransform.scale;
+  const viewX = minX + (baseWidth - viewWidth) / 2 + mapTransform.x;
+  const viewY = minY + (baseHeight - viewHeight) / 2 + mapTransform.y;
+  gameMap.setAttribute('viewBox', `${viewX} ${viewY} ${viewWidth} ${viewHeight}`);
+
+  // Update scale indicator
+  updateScaleIndicator(viewWidth);
+
+  // Calculate marker scale factor (keeps markers same visual size regardless of zoom)
+  const markerScale = viewWidth / baseViewWidth;
+
+  // Render grid
+  gridGroup.innerHTML = '';
+  const gridSize = 1000;
+  const gridStartX = Math.floor(minX / gridSize) * gridSize;
+  const gridStartY = Math.floor(minY / gridSize) * gridSize;
+
+  for (let x = gridStartX; x <= maxX; x += gridSize) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x);
+    line.setAttribute('y1', minY);
+    line.setAttribute('x2', x);
+    line.setAttribute('y2', maxY);
+    if (x === 0) line.classList.add('axis');
+    gridGroup.appendChild(line);
+  }
+
+  for (let y = gridStartY; y <= maxY; y += gridSize) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', minX);
+    line.setAttribute('y1', y);
+    line.setAttribute('x2', maxX);
+    line.setAttribute('y2', y);
+    if (y === 0) line.classList.add('axis');
+    gridGroup.appendChild(line);
+  }
+
+  // Render character paths
+  pathsGroup.innerHTML = '';
+  let pathIndex = 0;
+  for (const charId in characterPaths) {
+    const positions = characterPaths[charId];
+    if (positions && positions.length >= 2) {
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const points = positions.map(p => `${p.x},${p.y}`).join(' ');
+      polyline.setAttribute('points', points);
+      polyline.classList.add(`char-path-${pathIndex % 7}`);
+      polyline.style.strokeWidth = 40 * markerScale; // Scale stroke width
+      pathsGroup.appendChild(polyline);
+    }
+    pathIndex++;
+  }
+
+  // Render map features with scaled markers
+  featuresGroup.innerHTML = '';
+  if (state.mapFeatures && state.mapFeatures.length > 0) {
+    for (const feature of state.mapFeatures) {
+      if (!feature.position) continue;
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.classList.add('map-feature');
+      g.classList.add(feature.type || 'unknown');
+      g.classList.add(feature.discovered ? 'discovered' : 'undiscovered');
+      g.setAttribute('transform', `translate(${feature.position.x}, ${feature.position.y})`);
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', 150 * markerScale);
+      circle.style.strokeWidth = 20 * markerScale;
+      g.appendChild(circle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('y', 280 * markerScale);
+      text.setAttribute('font-size', 200 * markerScale);
+      text.textContent = feature.name || feature.id;
+      g.appendChild(text);
+
+      // Tooltip on hover
+      g.addEventListener('mouseenter', (e) => {
+        const desc = feature.discovered ? feature.description : 'Undiscovered';
+        g.setAttribute('title', `${feature.name}: ${desc}`);
+      });
+
+      featuresGroup.appendChild(g);
+    }
+  }
+
+  // Render objects (dead bodies and discovered objects) with scaled markers
+  objectsGroup.innerHTML = '';
+
+  // Render dead bodies
+  if (state.deadBodies && state.deadBodies.length > 0) {
+    for (const body of state.deadBodies) {
+      if (!body.position) continue;
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.classList.add('map-object');
+      g.classList.add('dead-body');
+      g.setAttribute('transform', `translate(${body.position.x}, ${body.position.y})`);
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', 100 * markerScale);
+      circle.style.strokeWidth = 15 * markerScale;
+      g.appendChild(circle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('y', 180 * markerScale);
+      text.setAttribute('font-size', 140 * markerScale);
+      // Extract original name from "dead body of X"
+      const name = body.originalCharacter?.name || body.name.replace('dead body of ', '');
+      text.textContent = '☠ ' + name.split(' ')[0];
+      g.appendChild(text);
+
+      g.addEventListener('mouseenter', () => {
+        g.setAttribute('title', body.name);
+      });
+
+      objectsGroup.appendChild(g);
+    }
+  }
+
+  // Render discovered objects
+  if (state.discoveredObjects && state.discoveredObjects.length > 0) {
+    for (const obj of state.discoveredObjects) {
+      if (!obj.position) continue;
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.classList.add('map-object');
+      g.classList.add('discovered-object');
+      g.setAttribute('transform', `translate(${obj.position.x}, ${obj.position.y})`);
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', 80 * markerScale);
+      circle.style.strokeWidth = 15 * markerScale;
+      g.appendChild(circle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('y', 160 * markerScale);
+      text.setAttribute('font-size', 120 * markerScale);
+      text.textContent = obj.name || obj.id;
+      g.appendChild(text);
+
+      g.addEventListener('mouseenter', () => {
+        g.setAttribute('title', `${obj.name}: ${obj.description || 'No description'}`);
+      });
+
+      objectsGroup.appendChild(g);
+    }
+  }
+
+  // Render characters with scaled markers
+  charactersGroup.innerHTML = '';
+  if (state.characters && state.characters.length > 0) {
+    for (const char of state.characters) {
+      const pos = char.position || { x: 0, y: 0 };
+
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.classList.add('map-character');
+      if (char.status === 'dead') g.classList.add('dead');
+      g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', 120 * markerScale);
+      circle.style.strokeWidth = 30 * markerScale;
+      g.appendChild(circle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('y', 220 * markerScale);
+      text.setAttribute('font-size', 160 * markerScale);
+      text.textContent = char.name ? char.name.split(' ')[0] : '?';
+      g.appendChild(text);
+
+      charactersGroup.appendChild(g);
+    }
+  }
+}
+
+// Update scale indicator
+function updateScaleIndicator(viewWidth) {
+  let scaleIndicator = mapContainer.querySelector('.map-scale');
+  if (!scaleIndicator) {
+    scaleIndicator = document.createElement('div');
+    scaleIndicator.className = 'map-scale';
+    scaleIndicator.innerHTML = '<div class="scale-bar"></div><span class="scale-label"></span>';
+    mapContainer.appendChild(scaleIndicator);
+  }
+
+  // Calculate meters per pixel (approximate based on container width)
+  const containerWidth = mapContainer.clientWidth || 300;
+  const metersPerPixel = viewWidth / containerWidth;
+
+  // Choose a nice round number for the scale
+  const targetBarWidth = 80; // pixels
+  const targetMeters = metersPerPixel * targetBarWidth;
+
+  // Round to nice numbers
+  let scaleMeters;
+  if (targetMeters >= 5000) scaleMeters = Math.round(targetMeters / 1000) * 1000;
+  else if (targetMeters >= 500) scaleMeters = Math.round(targetMeters / 500) * 500;
+  else if (targetMeters >= 100) scaleMeters = Math.round(targetMeters / 100) * 100;
+  else if (targetMeters >= 50) scaleMeters = Math.round(targetMeters / 50) * 50;
+  else scaleMeters = Math.round(targetMeters / 10) * 10 || 10;
+
+  const barWidth = scaleMeters / metersPerPixel;
+  const bar = scaleIndicator.querySelector('.scale-bar');
+  const label = scaleIndicator.querySelector('.scale-label');
+
+  bar.style.width = `${barWidth}px`;
+  label.textContent = scaleMeters >= 1000 ? `${scaleMeters / 1000}km` : `${scaleMeters}m`;
+}
+
+// Map pan/zoom event handlers
+function initMapInteraction() {
+  // Mouse drag for panning
+  gameMap.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return; // Left click only
+    isDragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    gameMap.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+
+    // Convert screen pixels to map units
+    const viewBox = gameMap.getAttribute('viewBox').split(' ').map(Number);
+    const viewWidth = viewBox[2];
+    const containerWidth = mapContainer.clientWidth || 300;
+    const scale = viewWidth / containerWidth;
+
+    mapTransform.x -= dx * scale;
+    mapTransform.y -= dy * scale;
+    dragStart = { x: e.clientX, y: e.clientY };
+
+    applyMapTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      gameMap.style.cursor = 'grab';
+    }
+  });
+
+  // Mouse wheel for zooming
+  mapContainer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.max(0.1, Math.min(10, mapTransform.scale * zoomFactor));
+
+    // Zoom toward mouse position
+    const rect = mapContainer.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    // Adjust pan to zoom toward mouse
+    const viewBox = gameMap.getAttribute('viewBox').split(' ').map(Number);
+    const viewWidth = viewBox[2];
+    const scaleRatio = viewWidth / rect.width;
+
+    const offsetX = (mouseX - centerX) * scaleRatio;
+    const offsetY = (mouseY - centerY) * scaleRatio;
+
+    mapTransform.x += offsetX * (1 - zoomFactor);
+    mapTransform.y += offsetY * (1 - zoomFactor);
+    mapTransform.scale = newScale;
+
+    applyMapTransform();
+  });
+
+  // Double-click to reset view
+  gameMap.addEventListener('dblclick', () => {
+    mapTransform = { x: 0, y: 0, scale: 1 };
+    applyMapTransform();
+  });
+
+  gameMap.style.cursor = 'grab';
+}
+
+// Apply current transform to map viewBox
+function applyMapTransform() {
+  const baseWidth = mapBounds.maxX - mapBounds.minX;
+  const baseHeight = mapBounds.maxY - mapBounds.minY;
+  const viewWidth = baseWidth / mapTransform.scale;
+  const viewHeight = baseHeight / mapTransform.scale;
+  const viewX = mapBounds.minX + (baseWidth - viewWidth) / 2 + mapTransform.x;
+  const viewY = mapBounds.minY + (baseHeight - viewHeight) / 2 + mapTransform.y;
+  gameMap.setAttribute('viewBox', `${viewX} ${viewY} ${viewWidth} ${viewHeight}`);
+  updateScaleIndicator(viewWidth);
+  updateMarkerSizes(viewWidth);
+}
+
+// Update marker sizes to keep them visually consistent when zooming
+function updateMarkerSizes(viewWidth) {
+  const markerScale = viewWidth / baseViewWidth;
+
+  // Update feature markers
+  gameMap.querySelectorAll('.map-feature').forEach(g => {
+    const circle = g.querySelector('circle');
+    const text = g.querySelector('text');
+    if (circle) circle.setAttribute('r', 150 * markerScale);
+    if (text) {
+      text.setAttribute('y', 280 * markerScale);
+      text.setAttribute('font-size', 200 * markerScale);
+    }
+  });
+
+  // Update feature circle stroke width
+  gameMap.querySelectorAll('.map-feature circle').forEach(circle => {
+    circle.style.strokeWidth = 20 * markerScale;
+  });
+
+  // Update character markers
+  gameMap.querySelectorAll('.map-character').forEach(g => {
+    const circle = g.querySelector('circle');
+    const text = g.querySelector('text');
+    if (circle) circle.setAttribute('r', 120 * markerScale);
+    if (text) {
+      text.setAttribute('y', 220 * markerScale);
+      text.setAttribute('font-size', 160 * markerScale);
+    }
+  });
+
+  // Update character circle stroke width
+  gameMap.querySelectorAll('.map-character circle').forEach(circle => {
+    circle.style.strokeWidth = 30 * markerScale;
+  });
+
+  // Update object markers (dead bodies and discovered objects)
+  gameMap.querySelectorAll('.map-object.dead-body').forEach(g => {
+    const circle = g.querySelector('circle');
+    const text = g.querySelector('text');
+    if (circle) {
+      circle.setAttribute('r', 100 * markerScale);
+      circle.style.strokeWidth = 15 * markerScale;
+    }
+    if (text) {
+      text.setAttribute('y', 180 * markerScale);
+      text.setAttribute('font-size', 140 * markerScale);
+    }
+  });
+
+  gameMap.querySelectorAll('.map-object.discovered-object').forEach(g => {
+    const circle = g.querySelector('circle');
+    const text = g.querySelector('text');
+    if (circle) {
+      circle.setAttribute('r', 80 * markerScale);
+      circle.style.strokeWidth = 15 * markerScale;
+    }
+    if (text) {
+      text.setAttribute('y', 160 * markerScale);
+      text.setAttribute('font-size', 120 * markerScale);
+    }
+  });
+
+  // Update path stroke width
+  gameMap.querySelectorAll('.map-paths polyline').forEach(polyline => {
+    polyline.style.strokeWidth = 40 * markerScale;
+  });
+}
+
+// Initialize map interaction on load
+initMapInteraction();
+
+// Story panel resize functionality
+let isResizing = false;
+let resizeStartY = 0;
+let resizeStartHeight = 0;
+
+function initStoryResize() {
+  storyResizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    resizeStartY = e.clientY;
+    resizeStartHeight = storySection.offsetHeight;
+    storyResizeHandle.classList.add('active');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+
+    const deltaY = e.clientY - resizeStartY;
+    const newHeight = Math.max(150, Math.min(window.innerHeight - 300, resizeStartHeight + deltaY));
+    storySection.style.height = newHeight + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      storyResizeHandle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Save height to localStorage
+      localStorage.setItem('storyPanelHeight', storySection.offsetHeight);
+    }
+  });
+
+  // Restore saved height
+  const savedHeight = localStorage.getItem('storyPanelHeight');
+  if (savedHeight) {
+    const height = parseInt(savedHeight, 10);
+    if (height >= 150 && height <= window.innerHeight - 300) {
+      storySection.style.height = height + 'px';
+    }
+  }
+}
+
+initStoryResize();
 
 // Store characters globally for editing
 let currentCharacters = [];
@@ -1018,6 +1551,7 @@ async function saveCharacterUpdate(characterId, updates) {
     if (stateData.worldState) {
       renderCharacterDisplay(stateData.worldState.characters);
       renderWorldState(stateData.worldState);
+      renderMap(stateData.worldState);
     }
   } catch (error) {
     alert('Error saving character: ' + error.message);
@@ -1025,62 +1559,152 @@ async function saveCharacterUpdate(characterId, updates) {
   }
 }
 
-function renderLogEntry(log) {
-  const entry = document.createElement('div');
-  entry.className = 'log-entry';
+// LLM Log Modal Functions
+async function openLlmLogMenu() {
+  llmLogMenu.classList.remove('hidden');
+  await fetchAndRenderLogs();
+}
 
-  // Handle DM instructions specially
-  if (log.type === 'dm-instructions') {
-    entry.innerHTML = `
-      <div class="log-header dm-instructions-header">
-        <span class="log-type dm-instructions">DM Instructions (Turn ${log.turn})</span>
-      </div>
-      <div class="log-content expanded">
-        <div class="log-section">
-          <pre>${escapeHtml(log.instructions)}</pre>
+function closeLlmLogMenu() {
+  llmLogMenu.classList.add('hidden');
+}
+
+async function fetchAndRenderLogs() {
+  llmLogList.innerHTML = '<p class="placeholder">Loading logs...</p>';
+
+  try {
+    const response = await fetch('/api/game/logs');
+    const data = await response.json();
+
+    if (!data.logs || data.logs.length === 0) {
+      llmLogList.innerHTML = '<p class="placeholder">No logs available. Start or load a story first.</p>';
+      return;
+    }
+
+    // Group logs by turn (logs are already sorted most recent first)
+    const turnGroups = {};
+    for (const log of data.logs) {
+      const turn = log.turn ?? 0;
+      if (!turnGroups[turn]) {
+        turnGroups[turn] = [];
+      }
+      turnGroups[turn].push(log);
+    }
+
+    // Sort turns in descending order (most recent first)
+    const sortedTurns = Object.keys(turnGroups).map(Number).sort((a, b) => b - a);
+
+    llmLogList.innerHTML = '';
+
+    for (const turn of sortedTurns) {
+      const logs = turnGroups[turn];
+
+      // Create turn group container
+      const turnGroup = document.createElement('div');
+      turnGroup.className = 'log-turn-group';
+
+      // Create turn header
+      const turnHeader = document.createElement('div');
+      turnHeader.className = 'log-turn-header';
+      const turnLabel = turn === 0 ? 'Opening' : `Turn ${turn}`;
+      const totalTime = logs.reduce((sum, l) => sum + (l.elapsed || 0), 0);
+      turnHeader.innerHTML = `
+        <span class="log-turn-label">${turnLabel}</span>
+        <span class="log-turn-count">${logs.length} calls</span>
+        <span class="log-turn-time">${totalTime}ms total</span>
+        <span class="log-turn-expand">▼</span>
+      `;
+      turnGroup.appendChild(turnHeader);
+
+      // Create entries container
+      const entriesContainer = document.createElement('div');
+      entriesContainer.className = 'log-turn-entries';
+
+      // Sort logs within turn by timestamp (oldest first for chronological order)
+      logs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      for (const log of logs) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+
+        // Format the role for display
+        let roleLabel = log.role || 'unknown';
+        roleLabel = roleLabel.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+        entry.innerHTML = `
+          <div class="log-header">
+            <span class="log-role">${roleLabel}</span>
+            <span class="log-model">${log.model}</span>
+            <span class="log-time">${log.elapsed}ms</span>
+          </div>
+          <div class="log-preview">${escapeHtml(log.responsePreview || '')}</div>
+        `;
+
+        entry.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showFullLog(log.filename);
+        });
+        entriesContainer.appendChild(entry);
+      }
+
+      turnGroup.appendChild(entriesContainer);
+
+      // Toggle expand/collapse on header click
+      turnHeader.addEventListener('click', () => {
+        turnGroup.classList.toggle('collapsed');
+        turnHeader.querySelector('.log-turn-expand').textContent =
+          turnGroup.classList.contains('collapsed') ? '▶' : '▼';
+      });
+
+      llmLogList.appendChild(turnGroup);
+    }
+  } catch (error) {
+    console.error('Error fetching logs:', error);
+    llmLogList.innerHTML = `<p class="placeholder">Error loading logs: ${error.message}</p>`;
+  }
+}
+
+async function showFullLog(filename) {
+  try {
+    const response = await fetch(`/api/game/logs/${filename}`);
+    const log = await response.json();
+
+    // Create a modal to show full log
+    const modal = document.createElement('div');
+    modal.className = 'log-detail-modal';
+    modal.innerHTML = `
+      <div class="log-detail-content">
+        <div class="log-detail-header">
+          <h3>Log Details</h3>
+          <button class="close-btn">&times;</button>
+        </div>
+        <div class="log-detail-body">
+          <div class="log-section">
+            <div class="log-section-title">Info</div>
+            <pre>Turn: ${log.turn}\nRole: ${log.role}\nModel: ${log.model}\nTime: ${log.elapsed}ms</pre>
+          </div>
+          <div class="log-section">
+            <div class="log-section-title">Request</div>
+            <pre>${JSON.stringify(log.request?.messages || log.request, null, 2)}</pre>
+          </div>
+          <div class="log-section">
+            <div class="log-section-title">Response</div>
+            <pre>${JSON.stringify(log.response?.choices?.[0]?.message?.content || log.response, null, 2)}</pre>
+          </div>
         </div>
       </div>
     `;
-    llmLog.appendChild(entry);
-    llmLog.scrollTop = llmLog.scrollHeight;
-    return;
+
+    modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.remove();
+    });
+
+    document.body.appendChild(modal);
+  } catch (error) {
+    console.error('Error loading log details:', error);
+    alert('Error loading log details: ' + error.message);
   }
-
-  let typeLabel = log.type;
-  if (log.type === 'player_action' && log.character) {
-    typeLabel = `${log.character}'s Action`;
-  } else if (log.type === 'dm_init') {
-    typeLabel = 'DM: Initialize';
-  } else if (log.type === 'dm_resolution') {
-    typeLabel = 'DM: Resolution';
-  }
-
-  entry.innerHTML = `
-    <div class="log-header">
-      <span class="log-type ${log.type}">${typeLabel}</span>
-      <span class="log-time">${log.elapsed}ms</span>
-    </div>
-    <div class="log-content">
-      <div class="log-section">
-        <div class="log-section-title">Request</div>
-        <pre>${JSON.stringify(log.request?.messages || log.request, null, 2)}</pre>
-      </div>
-      <div class="log-section">
-        <div class="log-section-title">Response (Parsed)</div>
-        <pre>${JSON.stringify(log.parsed, null, 2)}</pre>
-      </div>
-    </div>
-  `;
-
-  const header = entry.querySelector('.log-header');
-  const content = entry.querySelector('.log-content');
-
-  header.addEventListener('click', () => {
-    content.classList.toggle('expanded');
-  });
-
-  llmLog.appendChild(entry);
-  llmLog.scrollTop = llmLog.scrollHeight;
 }
 
 async function startGame() {
@@ -1092,7 +1716,6 @@ async function startGame() {
 
   showLoading();
   storyContent.innerHTML = '';
-  llmLog.innerHTML = '';
   currentTurn = 0;
 
   const models = getModelSelections();
@@ -1115,18 +1738,16 @@ async function startGame() {
 
     currentStoryId = data.storyId;
     previousCharacterStats = {}; // Reset stats tracking for new story
+    characterPaths = data.characterPaths || {}; // Use server-provided paths
+    mapTransform = { x: 0, y: 0, scale: 1 }; // Reset map view
     renderNarrative(data.narrative, 0, null, data.worldState.time);
     renderWorldState(data.worldState);
     renderCharacterDisplay(data.worldState.characters);
-
-    for (const log of data.llmLog) {
-      renderLogEntry(log);
-    }
+    renderMap(data.worldState);
 
     turnBtn.disabled = false;
     writeChapterBtn.disabled = false;
-    turnCounter.textContent = 'Turn: 0';
-    timeDisplay.textContent = formatTime(data.worldState.time);
+    updateStatusLine(0, data.worldState.time);
     dmControls.style.display = 'block';
 
     // Update author style inputs with values from world state
@@ -1149,25 +1770,30 @@ async function startGame() {
 
 let cancelTurnsRequested = false;
 
+function showProgress(message) {
+  progressText.textContent = message;
+  turnProgress.classList.remove('hidden');
+}
+
+function hideProgress() {
+  turnProgress.classList.add('hidden');
+  cancelProgressBtn.classList.add('hidden');
+}
+
 async function advanceTurn() {
   const turnCount = parseInt(turnCountInput.value) || 1;
   cancelTurnsRequested = false;
-  showLoading();
   turnBtn.disabled = true;
   turnCountInput.disabled = true;
 
-  // Show cancel button for multi-turn processing
-  let cancelBtn = null;
+  // Show non-blocking progress indicator
   if (turnCount > 1) {
-    cancelBtn = document.createElement('button');
-    cancelBtn.id = 'cancel-turns-btn';
-    cancelBtn.textContent = 'Stop After Current Turn';
-    cancelBtn.addEventListener('click', () => {
-      cancelTurnsRequested = true;
-      cancelBtn.textContent = 'Stopping...';
-      cancelBtn.disabled = true;
-    });
-    loading.appendChild(cancelBtn);
+    showProgress(`Processing turn 1 of ${turnCount}...`);
+    cancelProgressBtn.classList.remove('hidden');
+    cancelProgressBtn.disabled = false;
+    cancelProgressBtn.textContent = 'Stop';
+  } else {
+    showProgress('Processing turn...');
   }
 
   const dmInstructions = dmInstructionsInput.value.trim() || null;
@@ -1180,9 +1806,9 @@ async function advanceTurn() {
         break;
       }
 
-      // Update loading message for multiple turns
+      // Update progress message
       if (turnCount > 1) {
-        loading.querySelector('p').textContent = `Processing turn ${i + 1} of ${turnCount}...`;
+        showProgress(`Processing turn ${i + 1} of ${turnCount}...`);
       }
 
       const response = await fetch('/api/game/turn', {
@@ -1198,16 +1824,13 @@ async function advanceTurn() {
       }
 
       currentTurn = data.turn;
-      turnCounter.textContent = `Turn: ${currentTurn}`;
-      timeDisplay.textContent = formatTime(data.worldState.time);
+      updateStatusLine(currentTurn, data.worldState.time);
 
       renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time, data.thinkTalk);
       renderWorldState(data.worldState);
       renderCharacterDisplay(data.worldState.characters);
-
-      for (const log of data.turnLogs) {
-        renderLogEntry(log);
-      }
+      characterPaths = data.characterPaths || characterPaths; // Update from server
+      renderMap(data.worldState);
 
       // Check if story completed
       if (data.storyComplete) {
@@ -1221,17 +1844,19 @@ async function advanceTurn() {
     alert('Error advancing turn: ' + error.message);
     console.error(error);
   } finally {
-    // Remove cancel button if it exists
-    if (cancelBtn) {
-      cancelBtn.remove();
-    }
-    loading.querySelector('p').textContent = 'Processing...';
-    hideLoading();
+    hideProgress();
     turnBtn.disabled = false;
     turnCountInput.disabled = false;
     cancelTurnsRequested = false;
   }
 }
+
+// Cancel button handler
+cancelProgressBtn.addEventListener('click', () => {
+  cancelTurnsRequested = true;
+  cancelProgressBtn.textContent = 'Stopping...';
+  cancelProgressBtn.disabled = true;
+});
 
 startBtn.addEventListener('click', startGame);
 turnBtn.addEventListener('click', advanceTurn);
@@ -1366,7 +1991,6 @@ async function loadStory(storyId) {
 
     // Clear current content
     storyContent.innerHTML = '';
-    llmLog.innerHTML = '<p class="placeholder">LLM log cleared for loaded story</p>';
 
     // Render story content from saved markdown sections
     if (data.storyContent && data.storyContent.length > 0) {
@@ -1420,11 +2044,13 @@ async function loadStory(storyId) {
     // Update UI state
     seedInput.value = data.seed;
     currentTurn = data.worldState.turnNumber;
-    turnCounter.textContent = `Turn: ${currentTurn}`;
-    timeDisplay.textContent = formatTime(data.worldState.time);
+    updateStatusLine(currentTurn, data.worldState.time);
     renderWorldState(data.worldState);
     previousCharacterStats = {};  // Reset for loaded story - no change indicators
+    characterPaths = data.characterPaths || {};  // Load paths from server
+    mapTransform = { x: 0, y: 0, scale: 1 }; // Reset map view
     renderCharacterDisplay(data.worldState.characters);
+    renderMap(data.worldState);
 
     // Restore model selections
     if (data.models) {
@@ -1487,6 +2113,13 @@ menuBtn.addEventListener('click', openStoryMenu);
 menuCloseBtn.addEventListener('click', closeStoryMenu);
 storyMenu.addEventListener('click', (e) => {
   if (e.target === storyMenu) closeStoryMenu();
+});
+
+// LLM Log menu event listeners
+llmLogBtn.addEventListener('click', openLlmLogMenu);
+llmLogCloseBtn.addEventListener('click', closeLlmLogMenu);
+llmLogMenu.addEventListener('click', (e) => {
+  if (e.target === llmLogMenu) closeLlmLogMenu();
 });
 
 // Download story as PDF

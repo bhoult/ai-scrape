@@ -14,7 +14,7 @@ body {
 .container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100vh;
   max-width: 1800px;
   margin: 0 auto;
   padding: 1rem;
@@ -270,8 +270,14 @@ header h1 {
   flex-wrap: wrap;
 }
 
-#seed {
+.seed-area {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#seed {
   height: 80px;
   padding: 0.75rem;
   border: 1px solid #333;
@@ -414,14 +420,8 @@ button {
   border-color: #0f3460;
 }
 
-#turn-counter {
-  font-size: 14px;
-  color: #888;
-  text-align: center;
-}
-
-#time-display {
-  font-size: 14px;
+#status-line {
+  font-size: 13px;
   color: #ffb74d;
   text-align: center;
   font-weight: 600;
@@ -450,11 +450,63 @@ button {
   color: #666;
 }
 
+.turn-progress {
+  padding: 0.5rem 0.75rem;
+  background: #0f3460;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.turn-progress.hidden {
+  display: none;
+}
+
+.progress-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #333;
+  border-top-color: #4fc3f7;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+#progress-text {
+  color: #4fc3f7;
+  font-size: 14px;
+  flex: 1;
+}
+
+.cancel-progress-btn {
+  background: #e94560;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cancel-progress-btn:hover {
+  background: #ff6b6b;
+}
+
+.cancel-progress-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
+.cancel-progress-btn.hidden {
+  display: none;
+}
+
 main {
   display: flex;
   gap: 1rem;
   flex: 1;
-  overflow: hidden;
+  align-items: flex-start; /* Don't stretch children */
 }
 
 .left-panel {
@@ -462,35 +514,74 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  overflow: hidden;
+  position: sticky;
+  top: 1rem;
+  align-self: flex-start;
 }
 
 .story-section {
-  flex: 2;
+  flex: none; /* Don't use flex sizing, use explicit height */
+  height: 400px; /* Default height, will be overridden by JS */
   background: #16213e;
   border-radius: 8px;
   padding: 1rem;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 150px;
+  max-height: calc(100vh - 300px);
+  position: relative;
+}
+
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: linear-gradient(to bottom, transparent, #333);
+  cursor: ns-resize;
+  border-radius: 0 0 8px 8px;
+  transition: background 0.2s;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+  background: linear-gradient(to bottom, transparent, #e94560);
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  background: #666;
+  border-radius: 2px;
+}
+
+.resize-handle:hover::after,
+.resize-handle.active::after {
+  background: #e94560;
 }
 
 .world-section {
-  flex: 1;
+  flex-shrink: 0;
   background: #16213e;
   border-radius: 8px;
   padding: 1rem;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  max-height: 250px;
 }
 
 .right-panel {
   width: 500px;
+  flex-shrink: 0;
   background: #16213e;
   border-radius: 8px;
   padding: 1rem;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -500,11 +591,195 @@ main {
   flex-shrink: 0;
 }
 
-.log-section {
-  flex: 1;
+.map-section {
+  flex-shrink: 0;
+}
+
+#map-container {
+  position: relative;
+  background: #1a1a2e;
+  border-radius: 6px;
+  height: 300px;
   overflow: hidden;
+}
+
+#map-container .placeholder {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+}
+
+#game-map {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#game-map .map-grid line {
+  stroke: #2a2a4e;
+  stroke-width: 20;
+}
+
+#game-map .map-grid .axis {
+  stroke: #3a3a5e;
+  stroke-width: 40;
+}
+
+#game-map .map-paths polyline {
+  fill: none;
+  stroke: #4fc3f7; /* default fallback */
+  stroke-width: 40;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
+}
+
+#game-map .map-feature {
+  cursor: pointer;
+}
+
+#game-map .map-feature.undiscovered {
+  opacity: 0.3;
+}
+
+#game-map .map-feature circle {
+  stroke: #fff;
+  stroke-width: 20;
+}
+
+#game-map .map-feature text {
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+#game-map .map-feature.undiscovered text {
+  display: none;
+}
+
+/* Feature type colors */
+#game-map .map-feature.water_source circle { fill: #06b6d4; }
+#game-map .map-feature.shelter circle { fill: #8b5cf6; }
+#game-map .map-feature.landmark circle { fill: #f59e0b; }
+#game-map .map-feature.terrain circle { fill: #84cc16; }
+#game-map .map-feature.resource circle { fill: #ec4899; }
+#game-map .map-feature.hazard circle { fill: #ef4444; }
+#game-map .map-feature.unknown circle { fill: #6b7280; }
+
+#game-map .map-character {
+  cursor: pointer;
+}
+
+#game-map .map-character circle {
+  fill: #4fc3f7;
+  stroke: #fff;
+  stroke-width: 30;
+}
+
+#game-map .map-character text {
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+#game-map .map-character.dead circle {
+  fill: #666;
+}
+
+/* Map objects (dead bodies and discovered objects) */
+#game-map .map-object {
+  cursor: pointer;
+}
+
+#game-map .map-object circle {
+  stroke: #fff;
+  stroke-width: 15;
+}
+
+#game-map .map-object text {
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+/* Dead bodies - dark gray/skull */
+#game-map .map-object.dead-body circle {
+  fill: #4a4a4a;
+}
+
+#game-map .map-object.dead-body text {
+  fill: #ccc;
+}
+
+/* Discovered objects - golden/yellow */
+#game-map .map-object.discovered-object circle {
+  fill: #d4a50a;
+}
+
+#game-map .map-object.discovered-object text {
+  fill: #fff;
+}
+
+/* Character path colors - use full selector for specificity */
+#game-map .map-paths polyline.char-path-0 { stroke: #4fc3f7; }
+#game-map .map-paths polyline.char-path-1 { stroke: #f472b6; }
+#game-map .map-paths polyline.char-path-2 { stroke: #a78bfa; }
+#game-map .map-paths polyline.char-path-3 { stroke: #34d399; }
+#game-map .map-paths polyline.char-path-4 { stroke: #fbbf24; }
+#game-map .map-paths polyline.char-path-5 { stroke: #f87171; }
+#game-map .map-paths polyline.char-path-6 { stroke: #60a5fa; }
+
+/* Map Scale Indicator */
+.map-scale {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(22, 33, 62, 0.9);
+  padding: 6px 10px;
+  border-radius: 4px;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.scale-bar {
+  width: 50px;
+  height: 4px;
+  background: #4fc3f7;
+  border-radius: 2px;
+  position: relative;
+}
+
+.scale-bar::before,
+.scale-bar::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  background: #4fc3f7;
+  border-radius: 1px;
+}
+
+.scale-bar::before {
+  left: 0;
+}
+
+.scale-bar::after {
+  right: 0;
+}
+
+.scale-label {
+  font-size: 11px;
+  color: #aaa;
+  white-space: nowrap;
 }
 
 #character-display {
@@ -696,7 +971,7 @@ h2 {
   border-bottom: 1px solid #333;
 }
 
-#story-content, #world-state, #llm-log {
+#story-content, #world-state {
   flex: 1;
   overflow-y: auto;
   font-size: 14px;
@@ -1158,6 +1433,190 @@ h2 {
   color: #e94560;
   font-weight: 600;
   margin-bottom: 0.25rem;
+}
+
+/* LLM Log Modal Styles */
+.llm-log-content {
+  width: 800px;
+  max-width: 95%;
+}
+
+.llm-log-list {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
+  max-height: 70vh;
+}
+
+.llm-log-list .log-entry {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.llm-log-list .log-entry:hover {
+  background: #1a4a7a;
+}
+
+.llm-log-list .log-header {
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Turn group styles */
+.log-turn-group {
+  margin-bottom: 0.5rem;
+  border: 1px solid #333;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.log-turn-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #1a1a2e;
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-turn-header:hover {
+  background: #252545;
+}
+
+.log-turn-label {
+  color: #e94560;
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 80px;
+}
+
+.log-turn-count {
+  color: #4fc3f7;
+  font-size: 12px;
+}
+
+.log-turn-time {
+  color: #888;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.log-turn-expand {
+  color: #666;
+  font-size: 10px;
+  margin-left: 0.5rem;
+}
+
+.log-turn-entries {
+  background: #0f3460;
+}
+
+.log-turn-group.collapsed .log-turn-entries {
+  display: none;
+}
+
+.log-turn-entries .log-entry {
+  border-bottom: 1px solid #1a1a2e;
+}
+
+.log-turn-entries .log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-turn {
+  color: #e94560;
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 50px;
+}
+
+.log-role {
+  color: #4fc3f7;
+  font-size: 12px;
+  flex: 1;
+  min-width: 150px;
+}
+
+.log-model {
+  color: #888;
+  font-size: 11px;
+  min-width: 100px;
+}
+
+.log-preview {
+  padding: 0.5rem 0.75rem;
+  font-size: 11px;
+  color: #aaa;
+  background: #0a2540;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px solid #333;
+}
+
+/* Log Detail Modal */
+.log-detail-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.log-detail-content {
+  background: #16213e;
+  border-radius: 8px;
+  width: 900px;
+  max-width: 95%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #333;
+}
+
+.log-detail-header h3 {
+  color: #e94560;
+  margin: 0;
+}
+
+.log-detail-body {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.log-detail-body .log-section {
+  margin-bottom: 1rem;
+}
+
+.log-detail-body pre {
+  background: #0a2540;
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #aaa;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 0.5rem;
 }
 
 #loading {

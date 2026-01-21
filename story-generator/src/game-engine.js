@@ -72,6 +72,7 @@ export class GameEngine {
     this.currentDay = 1; // Track current day for novel generation
     this.dayEvents = []; // Events that happened during current day
     this.lastNovelTurn = 0; // Track when the last novel chapter was generated
+    this.characterPaths = {}; // Track character position history for map display
   }
 
   setModels(models) {
@@ -106,6 +107,31 @@ export class GameEngine {
     }
     // Save the updated state
     this.saveStory();
+  }
+
+  // Update character position history for map paths
+  updateCharacterPaths() {
+    if (!this.worldState || !this.worldState.characters) return;
+
+    for (const char of this.worldState.characters) {
+      if (!char.position) continue;
+
+      if (!this.characterPaths[char.id]) {
+        this.characterPaths[char.id] = [];
+      }
+
+      const positions = this.characterPaths[char.id];
+      const lastPos = positions[positions.length - 1];
+
+      // Only add if position changed
+      if (!lastPos || lastPos.x !== char.position.x || lastPos.y !== char.position.y) {
+        positions.push({
+          x: char.position.x,
+          y: char.position.y,
+          turn: this.worldState.turnNumber || 0
+        });
+      }
+    }
   }
 
   generateStoryId(seed) {
@@ -649,7 +675,7 @@ export class GameEngine {
     }
   }
 
-  async verifyCharacterStates(narrative, characters, elapsedMinutes = 30) {
+  async verifyCharacterStates(narrative, characters, elapsedMinutes = 30, turn = null) {
     // Build character descriptions for the prompt
     const charDescriptions = characters.map(c => {
       const stats = c.stats || {};
@@ -731,7 +757,7 @@ Respond with JSON only:
 ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     try {
-      const result = await queryLLMJSON(prompt, { model: this.models.dm, role: 'verify-state' });
+      const result = await queryLLMJSON(prompt, { model: this.models.dm, role: 'verify-state', turn });
       // Normalize keys to lowercase (LLMs return varying cases)
       const normalized = normalizeKeys(result.parsed || {});
       return normalized.characterupdates || [];
@@ -757,15 +783,14 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     mkdirSync(storyDir, { recursive: true });
     mkdirSync(historyDir, { recursive: true });
 
-    // Save map.json if mapFeatures exist
-    if (this.worldState.mapFeatures && this.worldState.mapFeatures.length > 0) {
-      const mapPath = join(storyDir, 'map.json');
-      writeFileSync(mapPath, JSON.stringify({
-        features: this.worldState.mapFeatures,
-        generatedAt: this.createdAt,
-        environment: this.worldState.environment
-      }, null, 2));
-    }
+    // Save map.json with features and character paths
+    const mapPath = join(storyDir, 'map.json');
+    writeFileSync(mapPath, JSON.stringify({
+      features: this.worldState.mapFeatures || [],
+      characterPaths: this.characterPaths || {},
+      generatedAt: this.createdAt,
+      environment: this.worldState.environment
+    }, null, 2));
 
     // Build markdown with images
     const mdContent = this.buildMarkdownWithImages();
@@ -966,9 +991,11 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     if (existsSync(mapPath)) {
       const mapData = JSON.parse(readFileSync(mapPath, 'utf-8'));
       this.worldState.mapFeatures = mapData.features || [];
+      this.characterPaths = mapData.characterPaths || {};
     } else {
       // Fallback to worldState.mapFeatures if stored there
       this.worldState.mapFeatures = Array.isArray(data.worldState.mapFeatures) ? data.worldState.mapFeatures : [];
+      this.characterPaths = {};
     }
 
     // Recreate agents with role-specific models (only for living characters)
@@ -987,7 +1014,8 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
       worldState: this.worldState.getStateSnapshot(),
       storyContent: this.storyContent,
       storyId: this.storyId,
-      models: this.models
+      models: this.models,
+      characterPaths: this.characterPaths
     };
   }
 
@@ -1282,6 +1310,10 @@ Respond with ONLY a JSON object:
       this.playerAgents.push(new PlayerAgent(character, this.models.character));
     }
 
+    // Initialize character paths with starting positions
+    this.characterPaths = {};
+    this.updateCharacterPaths();
+
     this.initialized = true;
 
     // Build initial story content
@@ -1312,7 +1344,8 @@ Respond with ONLY a JSON object:
       narrative: data.narrative,
       worldState: this.worldState.getStateSnapshot(),
       llmLog: this.llmLog,
-      storyId: this.storyId
+      storyId: this.storyId,
+      characterPaths: this.characterPaths
     };
   }
 
@@ -1347,7 +1380,7 @@ Respond with ONLY a JSON object:
         timestamp: new Date().toISOString()
       });
     }
-    const recentHistory = this.worldState.getRecentHistory(3);
+    const recentHistory = this.worldState.getRecentHistory(7);
     const stateSnapshot = this.worldState.getStateSnapshot();
 
     // Get actions and dialogue from previous turn for each character (what they observed)
@@ -1484,6 +1517,9 @@ Respond with ONLY a JSON object:
 
     this.worldState.applyChanges(resolution.worldChanges);
 
+    // Update character position history for map paths
+    this.updateCharacterPaths();
+
     // Create player agents for any new characters added this turn (keys are lowercase after normalizeKeys)
     if (resolution.worldChanges?.newcharacters && Array.isArray(resolution.worldChanges.newcharacters)) {
       for (const newChar of resolution.worldChanges.newcharacters) {
@@ -1503,7 +1539,7 @@ Respond with ONLY a JSON object:
     const elapsedMinutes = Math.max(0, newMinutes - oldMinutes);
 
     // Verify and update character states based on narrative
-    const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters, elapsedMinutes);
+    const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters, elapsedMinutes, currentTurn);
     if (verifiedUpdates && verifiedUpdates.length > 0) {
       console.log(`[Turn ${currentTurn}] Verified character updates:`, JSON.stringify(verifiedUpdates, null, 2));
       // Use lowercase key to match applyChanges expectations
@@ -1624,6 +1660,7 @@ Respond with ONLY a JSON object:
       narrative: resolution.narrative,
       worldState: this.worldState.getStateSnapshot(),
       turnLogs,
+      characterPaths: this.characterPaths,
       // Story completion info
       storyComplete: this.worldState.storyComplete || false,
       storyEnding: this.worldState.storyEnding || null

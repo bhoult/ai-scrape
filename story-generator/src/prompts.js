@@ -116,7 +116,7 @@ Respond with a JSON object containing:
   },
   "characters": [
     {
-      "id": "char_firstname",
+      "id": "<lowercase_firstname e.g. sarah, mike, alex>",
       "name": "Full Name",
       "appearance": {
         "gender": "male/female/other",
@@ -141,7 +141,7 @@ Respond with a JSON object containing:
       "status": "healthy",
       "stats": { "health": 100, "stamina": 100, "hunger": 0, "thirst": 0, "strength": 50, "dexterity": 50, "intelligence": 50, "encumbrance": 0, "sanity": 100, "anger": 0, "fear": 0 },
       "position": { "x": 0, "y": 0 },
-      "attitudes": { "other_char_id": { "love": 50, "anger": 0, "attraction": 0, "trust": 50, "fear": 0 } }
+      "attitudes": { "<other_character_id>": { "love": 50, "anger": 0, "attraction": 0, "trust": 50, "fear": 0 } }
     }
   ],
   "worldSummary": "Brief summary of the current situation",
@@ -694,9 +694,9 @@ When a character DROPS or PLACES an object:
 1. Add the object name to the character's inventoryRemove array
 2. Add a new entry to discoveredObjects with the object at its new position
 
-Example - Sarah picks up a canteen (obj_canteen):
+Example - A character picks up a canteen (obj_canteen):
 - removedObjects: ["obj_canteen"]
-- characterUpdates: [{ id: "char_sarah", inventoryAdd: ["canteen"], ... }]
+- characterUpdates: [{ id: "<exact id from CHARACTERS section>", inventoryAdd: ["canteen"], ... }]
 
 IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES (e.g., "canteen", "knife", "rope"), NOT object IDs (e.g., "obj_canteen"). Object IDs are only used in removedObjects and discoveredObjects.
 
@@ -747,20 +747,20 @@ Respond with JSON:
     },
     "characterUpdates": [
       {
-        "id": "char_sarah",
+        "id": "<use exact character id from CHARACTERS section above>",
         "inventoryAdd": [],
         "inventoryRemove": [],
         "statusChange": "wet and cold",
         "clothingChange": "naked",
-        "positionChange": { "x": 10, "y": -5 }
+        "positionChange": { "x": 150, "y": -80 }
       },
       {
-        "id": "char_mike",
+        "id": "<use exact character id from CHARACTERS section above>",
         "inventoryAdd": [],
         "inventoryRemove": ["shirt"],
         "statusChange": null,
         "clothingChange": "shirtless, wearing only cargo pants and boots",
-        "positionChange": null
+        "positionChange": { "x": 145, "y": -75 }
       }
     ],
     "environmentUpdate": {
@@ -783,7 +783,7 @@ Respond with JSON:
     "discoveredMapFeatures": ["map_feature_id1", "map_feature_id2"],
     "newCharacters": [
       {
-        "id": "char_newcomer",
+        "id": "<lowercase_name e.g. wolf, bandit, rescue_team>",
         "name": "Name (human, animal, creature, robot, etc.)",
         "appearance": {
           "gender": "male/female/none/unknown",
@@ -809,7 +809,7 @@ Respond with JSON:
         "status": "healthy/injured/hostile/hunting/etc",
         "stats": { "health": 100, "stamina": 100, "hunger": 0, "thirst": 0, "strength": 50, "dexterity": 50, "intelligence": 50, "encumbrance": 0, "sanity": 100, "anger": 0, "fear": 0 },
         "position": { "x": 15, "y": -10 },
-        "attitudes": { "char_existing": { "love": 0, "anger": 50, "attraction": 0, "trust": 10, "fear": 0 } },
+        "attitudes": { "<existing_character_id>": { "love": 0, "anger": 50, "attraction": 0, "trust": 10, "fear": 0 } },
         "disposition": "friendly/neutral/hostile"
       }
     ],

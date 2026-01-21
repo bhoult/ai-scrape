@@ -1,7 +1,7 @@
 import express from 'express';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { GameEngine, listStories } from './src/game-engine.js';
 import { fetchAvailableModels, getAvailableModels, getDefaultModel } from './src/config.js';
 import { exportStoryToPDF } from './src/pdf-export.js';
@@ -91,6 +91,63 @@ app.get('/api/stories', (req, res) => {
   }
 });
 
+// Get LLM logs for current story
+app.get('/api/game/logs', (req, res) => {
+  try {
+    if (!gameEngine || !gameEngine.storyId) {
+      return res.json({ logs: [] });
+    }
+    const logsDir = join(__dirname, 'stories', gameEngine.storyId, 'logs');
+    if (!existsSync(logsDir)) {
+      return res.json({ logs: [] });
+    }
+
+    const logFiles = readdirSync(logsDir)
+      .filter(f => f.endsWith('.json'))
+      .sort()
+      .reverse(); // Most recent first
+
+    const logs = logFiles.map(filename => {
+      const content = JSON.parse(readFileSync(join(logsDir, filename), 'utf-8'));
+      return {
+        filename,
+        timestamp: content.timestamp,
+        turn: content.turn,
+        role: content.role,
+        model: content.model,
+        elapsed: content.elapsed,
+        // Include summary of request/response for display
+        requestPreview: content.request?.messages?.[content.request.messages.length - 1]?.content?.substring(0, 200) + '...',
+        responsePreview: content.response?.choices?.[0]?.message?.content?.substring(0, 500) || 'No response'
+      };
+    });
+
+    res.json({ logs, storyId: gameEngine.storyId });
+  } catch (error) {
+    console.error('Error fetching logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get full log entry content
+app.get('/api/game/logs/:filename', (req, res) => {
+  try {
+    if (!gameEngine || !gameEngine.storyId) {
+      return res.status(404).json({ error: 'No active story' });
+    }
+    const { filename } = req.params;
+    const logPath = join(__dirname, 'stories', gameEngine.storyId, 'logs', filename);
+    if (!existsSync(logPath)) {
+      return res.status(404).json({ error: 'Log file not found' });
+    }
+    const content = JSON.parse(readFileSync(logPath, 'utf-8'));
+    res.json(content);
+  } catch (error) {
+    console.error('Error fetching log:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Load a saved story
 app.post('/api/stories/:id/load', async (req, res) => {
   try {
@@ -108,7 +165,8 @@ app.post('/api/stories/:id/load', async (req, res) => {
       worldState: result.worldState,
       storyContent: result.storyContent,
       storyId: result.storyId,
-      models: result.models
+      models: result.models,
+      characterPaths: result.characterPaths
     });
   } catch (error) {
     console.error('Error loading story:', error);
@@ -134,7 +192,8 @@ app.post('/api/game', async (req, res) => {
       narrative: result.narrative,
       worldState: result.worldState,
       llmLog: result.llmLog,
-      storyId: result.storyId
+      storyId: result.storyId,
+      characterPaths: result.characterPaths
     });
   } catch (error) {
     console.error('Error initializing game:', error);
@@ -157,7 +216,8 @@ app.post('/api/game/turn', async (req, res) => {
       characterActions: result.characterActions,
       narrative: result.narrative,
       worldState: result.worldState,
-      turnLogs: result.turnLogs
+      turnLogs: result.turnLogs,
+      characterPaths: result.characterPaths
     });
   } catch (error) {
     console.error('Error advancing turn:', error);
@@ -183,7 +243,8 @@ app.post('/api/game/delete-from-turn', async (req, res) => {
     res.json({
       success: true,
       turn: result.turn,
-      worldState: result.worldState
+      worldState: result.worldState,
+      characterPaths: gameEngine.characterPaths
     });
   } catch (error) {
     console.error('Error deleting turns:', error);

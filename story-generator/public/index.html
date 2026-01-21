@@ -11,11 +11,21 @@
     <header>
       <div class="header-row">
         <h1>Story Generator</h1>
-        <button id="menu-btn" class="menu-btn">Saved Stories</button>
+        <div class="header-buttons">
+          <button id="llm-log-btn" class="menu-btn">LLM Log</button>
+          <button id="menu-btn" class="menu-btn">Saved Stories</button>
+        </div>
       </div>
       <div class="controls">
         <div class="controls-top">
-          <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
+          <div class="seed-area">
+            <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
+            <div id="turn-progress" class="turn-progress hidden">
+              <div class="progress-spinner"></div>
+              <span id="progress-text">Processing...</span>
+              <button id="cancel-progress-btn" class="cancel-progress-btn hidden">Stop</button>
+            </div>
+          </div>
           <div class="buttons">
             <button id="start-btn">Start Story</button>
             <div class="turn-controls">
@@ -23,8 +33,7 @@
               <input type="number" id="turn-count" value="1" min="1" max="100" title="Number of turns">
             </div>
             <button id="write-chapter-btn" disabled title="Write a novel chapter from recent events">Write Chapter</button>
-            <span id="turn-counter">Turn: 0</span>
-            <span id="time-display"></span>
+            <span id="status-line"></span>
           </div>
         </div>
         <div class="options-row">
@@ -87,11 +96,24 @@
       </div>
     </div>
 
+    <div id="llm-log-menu" class="story-menu hidden">
+      <div class="story-menu-content llm-log-content">
+        <div class="story-menu-header">
+          <h2>LLM Log</h2>
+          <button id="llm-log-close-btn" class="close-btn">&times;</button>
+        </div>
+        <div id="llm-log-list" class="llm-log-list">
+          <p class="placeholder">Start or load a story to see LLM logs</p>
+        </div>
+      </div>
+    </div>
+
     <main>
       <div class="left-panel">
-        <div class="story-section">
+        <div class="story-section" id="story-section">
           <h2>Story</h2>
           <div id="story-content"></div>
+          <div class="resize-handle" id="story-resize-handle"></div>
         </div>
         <div class="world-section">
           <h2>World State</h2>
@@ -108,10 +130,22 @@
             <p class="placeholder">Character stats will appear here</p>
           </div>
         </div>
-        <div class="log-section">
-          <h2>LLM Log</h2>
-          <div id="llm-log">
-            <p class="placeholder">LLM requests and responses will appear here</p>
+        <div class="map-section">
+          <h2>Map</h2>
+          <div id="map-container">
+            <svg id="game-map" viewBox="-5000 -5000 10000 10000" preserveAspectRatio="xMidYMid meet">
+              <defs>
+                <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#4fc3f7"/>
+                </marker>
+              </defs>
+              <g class="map-grid"></g>
+              <g class="map-paths"></g>
+              <g class="map-features"></g>
+              <g class="map-objects"></g>
+              <g class="map-characters"></g>
+            </svg>
+            <p class="placeholder">Start a game to see map</p>
           </div>
         </div>
       </div>
