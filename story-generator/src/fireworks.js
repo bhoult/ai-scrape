@@ -607,5 +607,55 @@ export async function queryLLMJSON(prompt, options = {}) {
     }
   }
 
+  // Check for required fields (e.g., dm-init needs 'location' and 'characters')
+  const requiredFields = options.requiredFields || null;
+  if (requiredFields && result.parsed && originalModel !== FALLBACK_MODEL) {
+    // Build case-insensitive key lookup
+    const parsedKeysLower = {};
+    for (const key of Object.keys(result.parsed)) {
+      parsedKeysLower[key.toLowerCase()] = result.parsed[key];
+    }
+
+    const missingFields = requiredFields.filter(field => {
+      const value = parsedKeysLower[field.toLowerCase()];
+      return value === undefined || value === null ||
+             (Array.isArray(value) && value.length === 0);
+    });
+
+    if (missingFields.length > 0) {
+      const presentKeys = Object.keys(result.parsed);
+      console.log(`[LLM] Response missing required fields: ${missingFields.join(', ')}. Present: ${presentKeys.join(', ')}`);
+      console.log(`[LLM] Retrying with ${FALLBACK_MODEL}...`);
+
+      const retryResult = await queryLLM(prompt, { ...options, model: FALLBACK_MODEL, jsonMode: true });
+      try {
+        result.parsed = JSON.parse(retryResult.content);
+        result.content = retryResult.content;
+        result.response = retryResult.response;
+
+        // Check if fallback also missing fields (case-insensitive)
+        const fallbackKeysLower = {};
+        for (const key of Object.keys(result.parsed)) {
+          fallbackKeysLower[key.toLowerCase()] = result.parsed[key];
+        }
+        const stillMissing = requiredFields.filter(field => {
+          const value = fallbackKeysLower[field.toLowerCase()];
+          return value === undefined || value === null ||
+                 (Array.isArray(value) && value.length === 0);
+        });
+        if (stillMissing.length > 0) {
+          const errorMsg = `Fallback model also missing required fields: ${stillMissing.join(', ')}`;
+          logModelError('Missing Fields (Fallback)', FALLBACK_MODEL, retryResult.request, retryResult.content, {}, errorMsg, turn);
+          throw new Error(errorMsg);
+        }
+      } catch (parseErr) {
+        if (parseErr.message.includes('missing required fields')) throw parseErr;
+        const errorMsg = `Fallback model returned invalid JSON: ${parseErr.message}`;
+        logModelError('JSON Parse Error (Fallback)', FALLBACK_MODEL, retryResult.request, retryResult.content, {}, errorMsg, turn);
+        throw new Error(errorMsg);
+      }
+    }
+  }
+
   return result;
 }

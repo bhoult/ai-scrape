@@ -74,6 +74,7 @@ export class GameEngine {
     this.lastNovelTurn = 0; // Track when the last novel chapter was generated
     this.characterPaths = {}; // Track character position history for map display
     this.totalDistanceTraveled = {}; // Track cumulative distance traveled by each character
+    this.generateImages = true; // Whether to generate images for each turn
   }
 
   setModels(models) {
@@ -798,7 +799,9 @@ CHARACTERS: ${characterIds.map(c => `${c.name} (${c.id})`).join(', ')}
 CURRENT CHARACTER STATES:
 ${charDescriptions}
 
-Update clothing, status, inventory, stats, AND ATTITUDES for each character based on what happened.
+Update clothing, status, stats, AND ATTITUDES for each character based on what happened.
+
+NOTE: Do NOT include inventoryAdd or inventoryRemove - inventory is handled by the main resolution.
 
 CLOTHING GUIDELINES:
 - If characters remove clothing, update to reflect what they're still wearing
@@ -817,8 +820,6 @@ Respond with JSON only:
       "id": "character_id",
       "clothingChange": "new complete clothing description or null if unchanged",
       "statusChange": "new status or null if unchanged",
-      "inventoryAdd": [],
-      "inventoryRemove": [],
       "statsChange": {
         "health": 95,
         "stamina": 80,
@@ -1097,6 +1098,10 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     this.dmAgent = new DMAgent(this.models.dm);
     this.playerAgents = this.worldState.characters.map(char => new PlayerAgent(char, this.models.character));
     this.llmLog = [];
+
+    // Set deterministic action log path (append mode for loaded stories)
+    this.worldState.setDeterministicLogPath(join(storyDir, 'deterministic.log'), true);
+
     this.initialized = true;
 
     // Generate missing images if requested
@@ -1106,7 +1111,7 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     return {
       seed: this.seed,
-      worldState: this.worldState.getStateSnapshot(),
+      worldState: this.worldState.getFullStateSnapshot(),
       storyContent: this.storyContent,
       storyId: this.storyId,
       models: this.models,
@@ -1277,7 +1282,7 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
 
     return {
       turn: this.worldState.turnNumber,
-      worldState: this.worldState.getStateSnapshot()
+      worldState: this.worldState.getFullStateSnapshot()
     };
   }
 
@@ -1389,6 +1394,9 @@ Respond with ONLY a JSON object:
     // Set logs directory for this story
     setLogsDir(this.getLogsDir());
 
+    // Set deterministic action log path
+    this.worldState.setDeterministicLogPath(join(this.getStoryDir(), 'deterministic.log'));
+
     const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle, dmAuthorStyle, worldSize);
     this.llmLog.push(llmLog);
 
@@ -1420,7 +1428,7 @@ Respond with ONLY a JSON object:
     this.storyContent.push(data.narrative);
 
     // Generate image for opening scene (keys are lowercase after normalizeKeys)
-    if (data.scenefocus && data.scenevisuals) {
+    if (this.generateImages && data.scenefocus && data.scenevisuals) {
       await this.generateImage(0, data.scenefocus, data.scenevisuals, data.narrative);
     }
 
@@ -1439,7 +1447,7 @@ Respond with ONLY a JSON object:
 
     return {
       narrative: data.narrative,
-      worldState: this.worldState.getStateSnapshot(),
+      worldState: this.worldState.getFullStateSnapshot(),
       llmLog: this.llmLog,
       storyId: this.storyId,
       characterPaths: this.characterPaths
@@ -1461,9 +1469,14 @@ Respond with ONLY a JSON object:
       };
     }
 
+    // Log turn start
+    const currentTurn = this.worldState.turnNumber + 1;
+    this.worldState.logTurnStart(currentTurn);
+
     // Log DM instructions if provided
     if (dmInstructions) {
-      console.log(`[Turn ${this.worldState.turnNumber + 1}] DM Instructions: ${dmInstructions}`);
+      console.log(`[Turn ${currentTurn}] DM Instructions: ${dmInstructions}`);
+      this.worldState.logDMInstructions(currentTurn, dmInstructions);
     }
 
     const turnLogs = [];
@@ -1500,7 +1513,6 @@ Respond with ONLY a JSON object:
 
     // ===== PHASE 1: Think and Talk =====
     // All players consider the situation and speak to nearby characters
-    const currentTurn = this.worldState.turnNumber + 1;
     console.log(`[Turn ${currentTurn}] Phase 1: Think and Talk`);
     const thinkTalkResults = await Promise.all(
       this.playerAgents.map(agent => {
@@ -1574,6 +1586,9 @@ Respond with ONLY a JSON object:
       dialogue: result.dialogue
     }));
 
+    // Log character actions to deterministic log
+    this.worldState.logCharacterActions(currentTurn, characterActions);
+
     // Collect all speech from Phase 1 for inclusion in narrative
     const characterSpeech = thinkTalkResults
       .filter(result => result.speech)
@@ -1605,6 +1620,9 @@ Respond with ONLY a JSON object:
 
     turnLogs.push(resolution.llmLog);
 
+    // Log the narrative to deterministic log
+    this.worldState.logNarrative(currentTurn, resolution.narrative);
+
     // Log character updates for debugging (keys are lowercase after normalizeKeys)
     const charUpdates = resolution.worldChanges?.characterupdates;
     if (charUpdates && charUpdates.length > 0) {
@@ -1613,7 +1631,12 @@ Respond with ONLY a JSON object:
       console.log(`[Turn ${currentTurn}] No character updates in response`);
     }
 
-    this.worldState.applyChanges(resolution.worldChanges);
+    // Include durationMinutes in worldChanges for stat calculations
+    const changesWithDuration = {
+      ...resolution.worldChanges,
+      durationminutes: resolution.durationminutes || resolution.durationMinutes || 15
+    };
+    this.worldState.applyChanges(changesWithDuration);
 
     // Update character position history for map paths and track distances
     const turnDistances = this.updateCharacterPaths();
@@ -1697,7 +1720,7 @@ Respond with ONLY a JSON object:
     this.storyContent.push(resolution.narrative);
 
     // Generate image for this turn
-    if (resolution.sceneFocus && resolution.sceneVisuals) {
+    if (this.generateImages && resolution.sceneFocus && resolution.sceneVisuals) {
       await this.generateImage(this.worldState.turnNumber, resolution.sceneFocus, resolution.sceneVisuals, resolution.narrative, 3);
     }
 
@@ -1756,7 +1779,7 @@ Respond with ONLY a JSON object:
         heardSpeech: nearbySpeechMap[result.character.id] || []
       })),
       narrative: resolution.narrative,
-      worldState: this.worldState.getStateSnapshot(),
+      worldState: this.worldState.getFullStateSnapshot(),
       turnLogs,
       characterPaths: this.characterPaths,
       // Turn stats for header display
@@ -1775,7 +1798,7 @@ Respond with ONLY a JSON object:
     if (!this.initialized) {
       return null;
     }
-    return this.worldState.getStateSnapshot();
+    return this.worldState.getFullStateSnapshot();
   }
 
   getLLMLog() {

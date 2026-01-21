@@ -176,7 +176,7 @@ app.post('/api/stories/:id/load', async (req, res) => {
 
 app.post('/api/game', async (req, res) => {
   try {
-    const { seed, models: roleModels, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize } = req.body;
+    const { seed, models: roleModels, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize, generateImages } = req.body;
     if (!seed) {
       return res.status(400).json({ error: 'Seed is required' });
     }
@@ -185,6 +185,7 @@ app.post('/api/game', async (req, res) => {
     // Use provided role models or fall back to default for all
     const models = roleModels || { dm: defaultModel, character: defaultModel, narrator: defaultModel };
     gameEngine = new GameEngine(models);
+    gameEngine.generateImages = generateImages !== false; // Default to true
     const result = await gameEngine.initializeFromSeed(seed, authorStyle || null, dmAuthorStyle || null, characterAuthorStyle || null, worldSize || 1);
 
     res.json({
@@ -207,7 +208,11 @@ app.post('/api/game/turn', async (req, res) => {
       return res.status(400).json({ error: 'No game in progress. Start a game first.' });
     }
 
-    const { dmInstructions } = req.body;
+    const { dmInstructions, generateImages } = req.body;
+    // Update generateImages setting if provided
+    if (generateImages !== undefined) {
+      gameEngine.generateImages = generateImages;
+    }
     const result = await gameEngine.advanceTurn(dmInstructions || null);
 
     res.json({

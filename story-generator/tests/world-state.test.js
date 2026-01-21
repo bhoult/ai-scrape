@@ -63,7 +63,7 @@ describe('WorldState', () => {
           name: 'Test Location',
           description: 'A test location',
           exits: ['north'],
-          items: ['rock'],
+          items: ['rock', 'water bottle', 'rope'],  // Include items for inventory tests
           npcs: []
         },
         characters: [

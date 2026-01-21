@@ -15,7 +15,9 @@ import {
   generateDMStatThresholdsText,
   generateAbilityStatsText,
   generateStaminaGuidanceText,
-  generateHydrationGuidanceText
+  generateHydrationGuidanceText,
+  generateActivityLevelText,
+  generateEventCategoriesText
 } from './behavior-config.js';
 
 export const DM_SYSTEM_PROMPT = `You are a Dungeon Master narrating an interactive story from a third-person perspective. You observe and describe world events as an omniscient narrator.
@@ -130,7 +132,9 @@ Respond with a JSON object containing:
   "narrativeArc": "Current phase of the story (e.g., 'Introduction - characters assess their situation')",
   "majorEvents": ["The plane crashed in the desert"],
   "tensions": ["Immediate need for water", "Unknown location", "Limited supplies"],
-  "discoveredObjects": [],
+  "discoveredObjects": [
+    { "id": "obj_example", "name": "item name", "description": "Brief description", "position": { "x": 10, "y": -5 } }
+  ],
   "mapFeatures": [
     { "id": "feat_1", "type": "water_source", "name": "Name", "description": "Brief description", "position": { "x": ${examplePosX}, "y": ${examplePosY} }, "visibleFrom": ${exampleVisibleFrom} }
   ],
@@ -288,6 +292,9 @@ function buildPlayerContext(character, worldState, recentHistory) {
     return `  Towards ${targetName}: ${feelingsStr}`;
   }).join('\n');
 
+  // Get the result of the character's last action
+  const lastActionResult = character.lastActionResult || null;
+
   return {
     historyText,
     loc,
@@ -300,7 +307,8 @@ function buildPlayerContext(character, worldState, recentHistory) {
     discoveredObjectsStr,
     statsStr,
     positionStr,
-    attitudesStr
+    attitudesStr,
+    lastActionResult
   };
 }
 
@@ -633,7 +641,7 @@ Others present: ${ctx.others}
 
 ${buildCharacterDiscoveredLocationsText(character, worldState)}
 ${observedSection}
-RECENT EVENTS:
+${ctx.lastActionResult ? `RESULT OF YOUR LAST ACTION:\n${ctx.lastActionResult}\n\n` : ''}RECENT EVENTS:
 ${ctx.historyText}
 
 STORY CONTEXT:
@@ -727,7 +735,7 @@ Others present: ${ctx.others}
 
 ${buildCharacterDiscoveredLocationsText(character, worldState)}
 ${dialogueSection}
-RECENT EVENTS:
+${ctx.lastActionResult ? `RESULT OF YOUR LAST ACTION:\n${ctx.lastActionResult}\n\n` : ''}RECENT EVENTS:
 ${ctx.historyText}
 
 WORLD SUMMARY: ${worldState.summary}
@@ -892,9 +900,16 @@ ${generateDMStatThresholdsText(dmStatThresholds)}
 ABILITY STATS:
 ${generateAbilityStatsText(abilityStats)}
 
-${generateStaminaGuidanceText(staminaRates)}
+HYBRID STAT SYSTEM - IMPORTANT:
+Instead of calculating exact stat values, you provide ACTIVITY CATEGORIES and the system calculates stats.
+DO NOT provide statUpdates - provide activity levels and events instead.
 
-${generateHydrationGuidanceText(hydrationRates)}
+${generateActivityLevelText()}
+
+${generateEventCategoriesText()}
+
+The system will calculate stamina, hunger, thirst, health, sanity, fear, and anger based on these categories.
+You only need to categorize WHAT happened, not calculate numbers.
 
 Also consider:
 - How characters interact with each other based on their attitudes
@@ -1031,6 +1046,32 @@ MANDATORY - characterUpdates MUST reflect ALL state changes:
 - You MUST include a characterUpdates entry for EVERY character whose state changed this turn
 - If clothing is removed or destroyed, clothingChange MUST be set (e.g., "naked" or partial description)
 
+⚠️ INVENTORY RULES - CRITICAL (items will be REJECTED if not followed):
+- inventoryAdd items MUST come from a VALID SOURCE:
+  1. Items already in the current location's "items" array
+  2. Objects from discoveredObjects (also add ID to removedObjects when taken)
+  3. Items explicitly taken from another character or body
+  4. NEW items you add to the world THIS TURN via discoveredObjects
+- Only add items the character EXPLICITLY tried to obtain in their action
+
+EXAMPLE - Character searches wreckage and finds a water bottle:
+✓ CORRECT - Add to world first, then to inventory:
+{
+  "worldChanges": {
+    "discoveredObjects": [{"id": "obj_water1", "name": "water bottle", "description": "Half-full plastic bottle", "position": {"x": 10, "y": 5}}],
+    "removedObjects": ["obj_water1"],
+    "characterUpdates": [{"id": "sarah", "inventoryAdd": ["water bottle"], ...}]
+  }
+}
+
+✗ WRONG - Adding item that doesn't exist:
+{
+  "worldChanges": {
+    "characterUpdates": [{"id": "sarah", "inventoryAdd": ["water bottle"], ...}]
+  }
+}
+This will be REJECTED because "water bottle" is not in the world!
+
 LANGUAGE: ALL text must be in English - narrative, dialogue, item names, location names, object names, character names. Never use Chinese or any other non-English language.
 
 Respond with JSON:
@@ -1056,9 +1097,23 @@ Respond with JSON:
       "items": ["updated", "list", "of", "items"],
       "description": "Updated description if changed, or null"
     },
+    "_IMPORTANT_NO_STATS": "⚠️ DO NOT include 'statsChange' - use activityLevel and events instead. The system calculates stats automatically.",
     "characterUpdates": [
       {
         "id": "<use exact character id from CHARACTERS section above>",
+        "lastActionResult": "Successfully found water at the spring and refilled the canteen. The water appears clean.",
+        "_lastActionResultGuide": "REQUIRED: Brief description of what happened as a result of THIS character's action. Be specific about success/failure and consequences.",
+        "activityLevel": "strenuous",
+        "_activityLevelOptions": "rest | light | moderate | strenuous | extreme",
+        "hydrationEvent": "drinking",
+        "_hydrationOptions": "null | drinking | dehydrating",
+        "nutritionEvent": null,
+        "_nutritionOptions": "null | eating | vomiting",
+        "healthEvent": null,
+        "_healthOptions": "null | injured | healing | resting (if injured, add injurySeverity: minor|moderate|severe)",
+        "injurySeverity": null,
+        "mentalEvent": "relieved",
+        "_mentalOptions": "null | stressed | relieved | terrified | enraged | calm",
         "inventoryAdd": [],
         "inventoryRemove": [],
         "statusChange": "wet and cold",
@@ -1069,6 +1124,13 @@ Respond with JSON:
       },
       {
         "id": "<use exact character id from CHARACTERS section above>",
+        "lastActionResult": "Attempted to climb the ridge but slipped on loose rocks, suffering a minor scrape on the left arm.",
+        "activityLevel": "moderate",
+        "hydrationEvent": null,
+        "nutritionEvent": null,
+        "healthEvent": "injured",
+        "injurySeverity": "minor",
+        "mentalEvent": "stressed",
         "inventoryAdd": [],
         "inventoryRemove": ["shirt"],
         "statusChange": null,
@@ -1132,6 +1194,369 @@ Respond with JSON:
     "newLocation": null
   },
   "worldSummary": "Updated brief summary of situation after this turn"
+}`;
+}
+
+// Split DM Resolution - Call 1: World changes (objects, characters, environment, arc)
+export function dmWorldResolutionPrompt(worldState, characterActions, characterSpeech = [], dmInstructions = null, characterPaths = {}) {
+  const actionsText = characterActions.map(ca => {
+    let text = `${ca.character.name}: ${ca.action}`;
+    if (ca.dialogue) {
+      text += ` Says: "${ca.dialogue}"`;
+    }
+    return text;
+  }).join('\n');
+
+  const speechText = characterSpeech.length > 0
+    ? characterSpeech.map(cs => `${cs.name} says: "${cs.speech}"`).join('\n')
+    : 'No dialogue this turn';
+
+  const charactersText = worldState.characters.map(c => {
+    const appearance = c.appearance || {};
+    const hairDesc = [appearance.hairlength, appearance.haircolor, appearance.hairstyle].filter(Boolean).join(' ');
+    const appearanceStr = [
+      appearance.gender,
+      appearance.age,
+      appearance.ethnicity,
+      appearance.height,
+      appearance.weight,
+      appearance.build,
+      appearance.skintone ? `${appearance.skintone} skin` : null,
+      hairDesc ? `${hairDesc} hair` : null,
+      appearance.facialhair && appearance.facialhair !== 'none' ? appearance.facialhair : null,
+      appearance.eyecolor ? `${appearance.eyecolor} eyes` : null,
+      appearance.face,
+      appearance.distinguishing
+    ].filter(Boolean).join(', ');
+    const posStr = c.position ? ` at position (${c.position.x}, ${c.position.y})` : '';
+    return `- ${c.name} (${c.id}): ${appearanceStr || 'no description'}, wearing ${c.clothing || 'unknown'}, ${c.status}${posStr}, inventory: [${safeJoin(c.inventory) || 'nothing'}]`;
+  }).join('\n');
+
+  // Dead bodies info
+  const deadBodiesText = (worldState.deadBodies && worldState.deadBodies.length > 0)
+    ? '\nDEAD BODIES:\n' + worldState.deadBodies.map(b => {
+        const posStr = b.position ? ` at (${b.position.x}, ${b.position.y})` : '';
+        return `- ${b.name}${posStr}, carrying: [${safeJoin(b.inventory) || 'nothing'}]`;
+      }).join('\n')
+    : '';
+
+  // Discovered objects info
+  const discoveredObjectsText = (worldState.discoveredObjects && worldState.discoveredObjects.length > 0)
+    ? '\nDISCOVERED OBJECTS IN WORLD:\n' + worldState.discoveredObjects.map(obj => {
+        const posStr = obj.position ? ` at (${obj.position.x}, ${obj.position.y})` : '';
+        return `- ${obj.name} (${obj.id})${posStr}: ${obj.description || 'no description'}`;
+      }).join('\n')
+    : '';
+
+  // Visible map features
+  const visibleFeaturesText = buildVisibleFeaturesText(worldState);
+
+  const dmInstructionsText = dmInstructions
+    ? `\nDM INSTRUCTIONS (incorporate these into the narrative):\n${dmInstructions}\n`
+    : '';
+
+  const loc = worldState.currentLocation || {};
+  const env = worldState.environment || {};
+  const majorEventsText = safeJoin(worldState.majorEvents, '; ') || 'None yet';
+  const tensionsText = safeJoin(worldState.tensions, '; ') || 'None';
+  const envText = [
+    env.type,
+    env.terrain,
+    env.lighting,
+    env.weather,
+    env.temperature
+  ].filter(Boolean).join(', ') || 'Unknown';
+
+  const dmAuthorStyleText = worldState.dmAuthorStyle
+    ? `\nNARRATIVE STYLE: Write the narrative in the style of ${worldState.dmAuthorStyle}. Emulate their voice, sentence structure, pacing, and descriptive approach.\n`
+    : '';
+
+  return `WORLD RESOLUTION PHASE - Resolve character actions and update the world state.
+${dmAuthorStyleText}
+CURRENT TIME: ${formatTime(worldState.time)}
+ENVIRONMENT: ${envText}
+
+STORY GOAL: ${worldState.storyGoal || 'Not established'}
+VICTORY CONDITIONS: ${worldState.victoryConditions ? `${worldState.victoryConditions.primary} (Requirements: ${(worldState.victoryConditions.requirements || []).join(', ')})` : 'Not established'}
+NARRATIVE ARC: ${worldState.narrativeArc || 'Beginning'}
+MAJOR EVENTS SO FAR: ${majorEventsText}
+CURRENT TENSIONS: ${tensionsText}
+
+CURRENT LOCATION: ${loc.name || 'Unknown'}
+${loc.description || 'No description'}
+Items: ${safeJoin(loc.items) || 'None'}
+Exits: ${safeJoin(loc.exits) || 'None apparent'}
+
+CHARACTERS:
+${charactersText}
+${deadBodiesText}${discoveredObjectsText}
+
+${buildTravelSummaryText(worldState, characterPaths)}
+
+${buildDiscoveredLocationsText(worldState, characterPaths)}
+
+VISIBLE MAP FEATURES (characters can reach/discover these this turn):
+${visibleFeaturesText}
+
+${buildAllFeaturesText(worldState)}
+
+CHARACTER DIALOGUE THIS TURN:
+${speechText}
+
+CHARACTER ACTIONS THIS TURN:
+${actionsText}
+${dmInstructionsText}
+YOUR TASK: Write the narrative and update the WORLD STATE. A separate call will handle character-specific updates.
+
+In this call, you handle:
+1. The narrative (what happens, including dialogue)
+2. New objects discovered or created in the world (discoveredObjects)
+3. Objects removed from the world (removedObjects) - when picked up or destroyed
+4. New characters introduced (newCharacters)
+5. Map feature discoveries (discoveredMapFeatures)
+6. Environment changes (environmentUpdate)
+7. Location changes (locationUpdates)
+8. Story arc updates (tensions, major events, story ending)
+9. Time passage (durationMinutes)
+
+DO NOT handle in this call (handled in Character Resolution):
+- Character stat changes (activityLevel, events)
+- Character inventory changes (inventoryAdd/inventoryRemove)
+- Character movement
+- Character status/clothing changes
+
+IMPORTANT - DIALOGUE IN NARRATIVE:
+- The narrative MUST include character conversations as dialogue (in quotes)
+- Include what characters say to each other verbatim or paraphrased
+- Show characters responding to each other's speech
+
+TIME TRACKING:
+- Time must ALWAYS advance forward from the current time shown above
+- Estimate realistic duration for the actions taken (typically 10-60 minutes per turn)
+- Quick conversations/simple actions: 10-15 minutes
+- Moderate activities (searching, crafting, short travel): 20-40 minutes
+- Extended activities (long travel, complex tasks, rest): 1-4 hours
+
+DEATH:
+- If a character should die this turn, describe it in the narrative
+- You'll indicate death via deadCharacters array
+
+STORY ENDING - CHECK EVERY TURN:
+End the story when ANY condition is met:
+1. DEFEAT - All player characters die → storyEnding: { "type": "defeat", "summary": "..." }
+2. VICTORY - The storyGoal/victoryConditions are achieved → storyEnding: { "type": "victory", "summary": "..." }
+3. OTHER - Story reaches natural conclusion → storyEnding: { "type": "other", "summary": "..." }
+
+CURRENT VICTORY CONDITIONS:
+${worldState.victoryConditions ? `PRIMARY: ${worldState.victoryConditions.primary}
+REQUIREMENTS: ${(worldState.victoryConditions.requirements || []).join(', ')}
+→ If these are met THIS TURN, you MUST set storyEnding with type "victory"` : 'Not specified - use reasonable judgment based on storyGoal'}
+
+NEW CHARACTERS (max 7 total, current: ${(worldState.characters || []).length}/7):
+- You can introduce new characters to advance the narrative
+- Characters can be ANY type: humans, animals, aliens, creatures, robots, monsters, spirits, etc.
+- For non-humans, adapt appearance fields appropriately
+
+DISCOVERED OBJECTS:
+When characters find or create items in the world, add them to discoveredObjects.
+When items are picked up (will be handled in Character Resolution), add their IDs to removedObjects.
+
+MAP FEATURE DISCOVERY:
+- Characters can ONLY discover features that appear in VISIBLE MAP FEATURES (within visibility range)
+- Include discovered feature IDs in discoveredMapFeatures array
+
+LANGUAGE: ALL text must be in English.
+
+Respond with JSON:
+{
+  "narrative": "Paragraph describing what happens INCLUDING character dialogue in quotes (3-5 sentences)",
+  "sceneFocus": "characters|landscape|object|phenomenon",
+  "sceneVisuals": {
+    "characterAction": "What characters are doing (used when sceneFocus='characters')",
+    "objectDescription": "A discovered object/landmark (used when sceneFocus='object')",
+    "phenomenonDescription": "Weather/wildlife/event (used when sceneFocus='phenomenon')"
+  },
+  "durationMinutes": 30,
+  "arcUpdates": {
+    "narrativeArc": "Updated phase of the story",
+    "newMajorEvents": ["Any significant events from this turn"],
+    "tensions": ["Updated list of current tensions"],
+    "storyGoal": "Only update if goal changes, otherwise omit",
+    "storyEnding": null
+  },
+  "worldChanges": {
+    "locationUpdates": {
+      "items": ["updated", "list", "of", "items"],
+      "description": "Updated description if changed, or null"
+    },
+    "environmentUpdate": {
+      "type": "only if changes",
+      "terrain": "only if changes",
+      "lighting": "update for time/location",
+      "weather": "update if changes",
+      "temperature": "update if changes"
+    },
+    "discoveredObjects": [
+      {
+        "id": "obj_unique_id",
+        "name": "object name in English",
+        "description": "Brief description",
+        "position": { "x": 100, "y": 60 },
+        "status": "discovered"
+      }
+    ],
+    "removedObjects": ["obj_id_of_picked_up_item"],
+    "discoveredMapFeatures": ["map_feature_id"],
+    "newCharacters": [],
+    "deadCharacters": ["character_id"],
+    "newLocation": null
+  },
+  "worldSummary": "Updated brief summary of situation after this turn"
+}`;
+}
+
+// Split DM Resolution - Call 2: Character updates (given world state from Call 1)
+export function dmCharacterResolutionPrompt(worldState, characterActions, worldResolutionResult) {
+  const actionsText = characterActions.map(ca => {
+    let text = `${ca.character.name} (${ca.character.id}): ${ca.action}`;
+    if (ca.dialogue) {
+      text += ` Says: "${ca.dialogue}"`;
+    }
+    return text;
+  }).join('\n');
+
+  const charactersText = worldState.characters.map(c => {
+    const stats = c.stats || {};
+    const statsStr = `HP:${stats.health ?? 100}% STM:${stats.stamina ?? 100}% HNG:${stats.hunger ?? 0}% THR:${stats.thirst ?? 0}%`;
+    const posStr = c.position ? ` at (${c.position.x}, ${c.position.y})` : '';
+    return `- ${c.name} (${c.id}): ${c.status}${posStr}, inventory: [${safeJoin(c.inventory) || 'nothing'}], Stats: ${statsStr}`;
+  }).join('\n');
+
+  // Build available items list from multiple sources
+  const availableItems = [];
+
+  // Items at current location
+  const locationItems = worldState.currentLocation?.items || [];
+  if (locationItems.length > 0) {
+    availableItems.push(`LOCATION ITEMS: ${locationItems.join(', ')}`);
+  }
+
+  // Existing discovered objects (before this turn)
+  const existingObjects = (worldState.discoveredObjects || []).map(obj => `${obj.name} (${obj.id})`);
+  if (existingObjects.length > 0) {
+    availableItems.push(`EXISTING DISCOVERED OBJECTS: ${existingObjects.join(', ')}`);
+  }
+
+  // NEW objects from world resolution (Call 1)
+  const newObjects = (worldResolutionResult.worldChanges?.discoveredObjects || []).map(obj => `${obj.name} (${obj.id}) [NEW THIS TURN]`);
+  if (newObjects.length > 0) {
+    availableItems.push(`NEW OBJECTS DISCOVERED THIS TURN: ${newObjects.join(', ')}`);
+  }
+
+  // Dead bodies with inventory
+  const deadBodies = worldState.deadBodies || [];
+  const bodyItems = deadBodies.flatMap(b => (b.inventory || []).map(item => `${item} (from ${b.name}'s body)`));
+  if (bodyItems.length > 0) {
+    availableItems.push(`ITEMS ON DEAD BODIES: ${bodyItems.join(', ')}`);
+  }
+
+  const availableItemsText = availableItems.length > 0
+    ? availableItems.join('\n')
+    : 'No items available in the world';
+
+  // Objects that were removed this turn (picked up, so can't be picked up again)
+  const removedThisTurn = worldResolutionResult.worldChanges?.removedObjects || [];
+  const removedText = removedThisTurn.length > 0
+    ? `\nOBJECTS ALREADY REMOVED THIS TURN (cannot be picked up): ${removedThisTurn.join(', ')}`
+    : '';
+
+  return `CHARACTER RESOLUTION PHASE - Update each character based on their actions and the narrative.
+
+WHAT HAPPENED THIS TURN (from World Resolution):
+${worldResolutionResult.narrative}
+
+TIME ELAPSED: ${worldResolutionResult.durationMinutes || 30} minutes
+
+CHARACTERS:
+${charactersText}
+
+CHARACTER ACTIONS THIS TURN:
+${actionsText}
+
+AVAILABLE ITEMS THAT CAN BE ADDED TO INVENTORY:
+${availableItemsText}${removedText}
+
+YOUR TASK: Provide updates for each character who did something this turn.
+
+For EACH character, determine:
+1. lastActionResult - What happened as a result of their action (success/failure/partial, consequences)
+2. activityLevel - How physically demanding was their activity
+3. Events - Any hydration, nutrition, health, or mental events
+4. inventoryAdd - Items picked up (MUST be from AVAILABLE ITEMS above)
+5. inventoryRemove - Items used, dropped, or given away
+6. movement - How far and in what direction they moved
+7. statusChange - Any change to their status (injured, tired, wet, etc.)
+8. clothingChange - Any change to their clothing (FULL description of current outfit)
+9. sightDistance - How far they can see (based on terrain, elevation, weather, equipment)
+
+HYBRID STAT SYSTEM:
+Instead of calculating exact stat values, provide ACTIVITY CATEGORIES and the system calculates stats.
+
+${generateActivityLevelText()}
+
+${generateEventCategoriesText()}
+
+INVENTORY RULES - CRITICAL:
+- inventoryAdd MUST ONLY contain items from "AVAILABLE ITEMS" section above
+- ⚠️ USE THE EXACT ITEM NAME as listed above - validation will REJECT items with different names
+  - Example: If the item is "emergency thermal blanket", you MUST use "emergency thermal blanket"
+  - NOT "thermal blanket", NOT "blanket", NOT "emergency blanket" - the EXACT name only
+- When adding an item from discoveredObjects, also include its ID in objectsToRemove
+- Object IDs are only used in objectsToRemove
+- If a character finds/picks up an item NOT listed above, it will be REJECTED - items must exist in the world first
+
+EXAMPLE - Character picks up the new water bottle discovered this turn:
+{
+  "id": "sarah",
+  "lastActionResult": "Found a water bottle in the wreckage and picked it up.",
+  "inventoryAdd": ["water bottle"],
+  "objectsToRemove": ["obj_water1"]
+}
+
+MOVEMENT - Use targetLocation for navigation:
+- movement: { "targetLocation": "Rock Overhang" } - system calculates direction automatically
+- OR: { "direction": "northeast", "distance": 300 } - for exploration without destination
+- Walking speed: ~80m/min, max per turn: ~1200m
+
+SIGHT DISTANCE GUIDE (in meters):
+- Desert/plains: 4000-10000m
+- Forest/jungle: 200-1000m
+- Building/cave: 20-100m
+- On elevation: multiply by 2-5x
+- Bad weather: reduce by 50-90%
+- Night without light: 100-200m
+
+Respond with JSON:
+{
+  "characterUpdates": [
+    {
+      "id": "<exact character id>",
+      "lastActionResult": "Brief description of what happened as a result of their action",
+      "activityLevel": "rest|light|moderate|strenuous|extreme",
+      "hydrationEvent": null,
+      "nutritionEvent": null,
+      "healthEvent": null,
+      "injurySeverity": null,
+      "mentalEvent": null,
+      "inventoryAdd": [],
+      "inventoryRemove": [],
+      "objectsToRemove": [],
+      "statusChange": null,
+      "clothingChange": null,
+      "movement": { "targetLocation": "Location Name" },
+      "sightDistance": 2000
+    }
+  ]
 }`;
 }
 

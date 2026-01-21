@@ -38,6 +38,7 @@ const storySection = document.getElementById('story-section');
 const storyResizeHandle = document.getElementById('story-resize-handle');
 const worldSizeInput = document.getElementById('world-size');
 const worldSizeValue = document.getElementById('world-size-value');
+const enableImageGenCheckbox = document.getElementById('generate-images');
 
 let currentTurn = 0;
 let currentStoryId = null;
@@ -344,7 +345,8 @@ function renderNarrative(narrative, turn, characterActions = null, time = null, 
   }
 
   // Add image placeholder (before narrative for float wrapping)
-  if (currentStoryId) {
+  // Only show if images are enabled or we're loading an existing story with images
+  if (currentStoryId && enableImageGenCheckbox.checked) {
     const imageContainer = document.createElement('div');
     imageContainer.className = 'turn-image';
     imageContainer.dataset.turn = turn;
@@ -823,6 +825,8 @@ function hideMapTooltip() {
 }
 
 // Render the SVG map with features, characters, and paths
+// Note: SVG y-axis goes downward, but our coordinate system has +y as north.
+// We negate y-coordinates when rendering to make north appear at top of map.
 function renderMap(state) {
   if (!state) {
     mapContainer.querySelector('.placeholder').style.display = 'block';
@@ -838,64 +842,72 @@ function renderMap(state) {
   const objectsGroup = gameMap.querySelector('.map-objects');
   const charactersGroup = gameMap.querySelector('.map-characters');
 
+  // Helper to flip y for SVG rendering (north = +y in world, but SVG y increases downward)
+  const flipY = (y) => -y;
+
   // Calculate bounds for viewBox
   let minX = -1000, maxX = 1000, minY = -1000, maxY = 1000;
 
-  // Include map features in bounds
+  // Include map features in bounds (using flipped y for SVG)
   if (state.mapFeatures && state.mapFeatures.length > 0) {
     for (const feature of state.mapFeatures) {
       if (feature.position) {
+        const svgY = flipY(feature.position.y);
         minX = Math.min(minX, feature.position.x - 500);
         maxX = Math.max(maxX, feature.position.x + 500);
-        minY = Math.min(minY, feature.position.y - 500);
-        maxY = Math.max(maxY, feature.position.y + 500);
+        minY = Math.min(minY, svgY - 500);
+        maxY = Math.max(maxY, svgY + 500);
       }
     }
   }
 
-  // Include characters in bounds
+  // Include characters in bounds (using flipped y for SVG)
   if (state.characters && state.characters.length > 0) {
     for (const char of state.characters) {
       if (char.position) {
+        const svgY = flipY(char.position.y);
         minX = Math.min(minX, char.position.x - 500);
         maxX = Math.max(maxX, char.position.x + 500);
-        minY = Math.min(minY, char.position.y - 500);
-        maxY = Math.max(maxY, char.position.y + 500);
+        minY = Math.min(minY, svgY - 500);
+        maxY = Math.max(maxY, svgY + 500);
       }
     }
   }
 
-  // Include dead bodies in bounds
+  // Include dead bodies in bounds (using flipped y for SVG)
   if (state.deadBodies && state.deadBodies.length > 0) {
     for (const body of state.deadBodies) {
       if (body.position) {
+        const svgY = flipY(body.position.y);
         minX = Math.min(minX, body.position.x - 300);
         maxX = Math.max(maxX, body.position.x + 300);
-        minY = Math.min(minY, body.position.y - 300);
-        maxY = Math.max(maxY, body.position.y + 300);
+        minY = Math.min(minY, svgY - 300);
+        maxY = Math.max(maxY, svgY + 300);
       }
     }
   }
 
-  // Include discovered objects in bounds
+  // Include discovered objects in bounds (using flipped y for SVG)
   if (state.discoveredObjects && state.discoveredObjects.length > 0) {
     for (const obj of state.discoveredObjects) {
       if (obj.position) {
+        const svgY = flipY(obj.position.y);
         minX = Math.min(minX, obj.position.x - 300);
         maxX = Math.max(maxX, obj.position.x + 300);
-        minY = Math.min(minY, obj.position.y - 300);
-        maxY = Math.max(maxY, obj.position.y + 300);
+        minY = Math.min(minY, svgY - 300);
+        maxY = Math.max(maxY, svgY + 300);
       }
     }
   }
 
-  // Include paths in bounds
+  // Include paths in bounds (using flipped y for SVG)
   for (const charId in characterPaths) {
     for (const pos of characterPaths[charId]) {
+      const svgY = flipY(pos.y);
       minX = Math.min(minX, pos.x - 200);
       maxX = Math.max(maxX, pos.x + 200);
-      minY = Math.min(minY, pos.y - 200);
-      maxY = Math.max(maxY, pos.y + 200);
+      minY = Math.min(minY, svgY - 200);
+      maxY = Math.max(maxY, svgY + 200);
     }
   }
 
@@ -951,14 +963,14 @@ function renderMap(state) {
     gridGroup.appendChild(line);
   }
 
-  // Render character paths
+  // Render character paths (with flipped y for SVG)
   pathsGroup.innerHTML = '';
   let pathIndex = 0;
   for (const charId in characterPaths) {
     const positions = characterPaths[charId];
     if (positions && positions.length >= 2) {
       const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-      const points = positions.map(p => `${p.x},${p.y}`).join(' ');
+      const points = positions.map(p => `${p.x},${flipY(p.y)}`).join(' ');
       polyline.setAttribute('points', points);
       polyline.classList.add(`char-path-${pathIndex % 7}`);
       polyline.style.strokeWidth = 40 * markerScale; // Scale stroke width
@@ -967,7 +979,7 @@ function renderMap(state) {
     pathIndex++;
   }
 
-  // Render sight range circles for characters
+  // Render sight range circles for characters (with flipped y for SVG)
   sightRangesGroup.innerHTML = '';
   if (state.characters && state.characters.length > 0) {
     for (const char of state.characters) {
@@ -977,7 +989,7 @@ function renderMap(state) {
 
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('cx', pos.x);
-      circle.setAttribute('cy', pos.y);
+      circle.setAttribute('cy', flipY(pos.y));
       circle.setAttribute('r', sightDistance);
       sightRangesGroup.appendChild(circle);
     }
@@ -986,17 +998,18 @@ function renderMap(state) {
   // Collect all labeled items for clustering
   const labeledItems = [];
 
-  // Render map features with scaled markers (collect labels)
+  // Render map features with scaled markers (collect labels) - with flipped y for SVG
   featuresGroup.innerHTML = '';
   if (state.mapFeatures && state.mapFeatures.length > 0) {
     for (const feature of state.mapFeatures) {
       if (!feature.position) continue;
 
+      const svgY = flipY(feature.position.y);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.classList.add('map-feature');
       g.classList.add(feature.type || 'unknown');
       g.classList.add(feature.discovered ? 'discovered' : 'undiscovered');
-      g.setAttribute('transform', `translate(${feature.position.x}, ${feature.position.y})`);
+      g.setAttribute('transform', `translate(${feature.position.x}, ${svgY})`);
 
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('r', 150 * markerScale);
@@ -1012,10 +1025,10 @@ function renderMap(state) {
 
       featuresGroup.appendChild(g);
 
-      // Collect for label clustering (show ALL features for debugging)
+      // Collect for label clustering (show ALL features for debugging) - note: labels use SVG y
       labeledItems.push({
         x: feature.position.x,
-        y: feature.position.y + 280 * markerScale,
+        y: svgY + 280 * markerScale,
         label: feature.name || feature.id,
         fontSize: 200,
         type: 'feature',
@@ -1024,7 +1037,7 @@ function renderMap(state) {
     }
   }
 
-  // Render objects (dead bodies and discovered objects) with scaled markers
+  // Render objects (dead bodies and discovered objects) with scaled markers - with flipped y for SVG
   objectsGroup.innerHTML = '';
 
   // Render dead bodies (collect labels)
@@ -1032,10 +1045,11 @@ function renderMap(state) {
     for (const body of state.deadBodies) {
       if (!body.position) continue;
 
+      const svgY = flipY(body.position.y);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.classList.add('map-object');
       g.classList.add('dead-body');
-      g.setAttribute('transform', `translate(${body.position.x}, ${body.position.y})`);
+      g.setAttribute('transform', `translate(${body.position.x}, ${svgY})`);
 
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('r', 100 * markerScale);
@@ -1050,11 +1064,11 @@ function renderMap(state) {
 
       objectsGroup.appendChild(g);
 
-      // Collect for label clustering
+      // Collect for label clustering - note: labels use SVG y
       const name = body.originalCharacter?.name || body.name.replace('dead body of ', '');
       labeledItems.push({
         x: body.position.x,
-        y: body.position.y + 180 * markerScale,
+        y: svgY + 180 * markerScale,
         label: '☠' + name.split(' ')[0],
         fontSize: 140,
         type: 'dead-body'
@@ -1062,15 +1076,16 @@ function renderMap(state) {
     }
   }
 
-  // Render discovered objects (collect labels)
+  // Render discovered objects (collect labels) - with flipped y for SVG
   if (state.discoveredObjects && state.discoveredObjects.length > 0) {
     for (const obj of state.discoveredObjects) {
       if (!obj.position) continue;
 
+      const svgY = flipY(obj.position.y);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.classList.add('map-object');
       g.classList.add('discovered-object');
-      g.setAttribute('transform', `translate(${obj.position.x}, ${obj.position.y})`);
+      g.setAttribute('transform', `translate(${obj.position.x}, ${svgY})`);
 
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('r', 80 * markerScale);
@@ -1085,10 +1100,10 @@ function renderMap(state) {
 
       objectsGroup.appendChild(g);
 
-      // Collect for label clustering
+      // Collect for label clustering - note: labels use SVG y
       labeledItems.push({
         x: obj.position.x,
-        y: obj.position.y + 160 * markerScale,
+        y: svgY + 160 * markerScale,
         label: obj.name || obj.id,
         fontSize: 120,
         type: 'object'
@@ -1096,16 +1111,17 @@ function renderMap(state) {
     }
   }
 
-  // Render characters with scaled markers (collect labels)
+  // Render characters with scaled markers (collect labels) - with flipped y for SVG
   charactersGroup.innerHTML = '';
   if (state.characters && state.characters.length > 0) {
     for (const char of state.characters) {
       const pos = char.position || { x: 0, y: 0 };
+      const svgY = flipY(pos.y);
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.classList.add('map-character');
       if (char.status === 'dead') g.classList.add('dead');
-      g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
+      g.setAttribute('transform', `translate(${pos.x}, ${svgY})`);
 
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('r', 120 * markerScale);
@@ -1123,10 +1139,10 @@ function renderMap(state) {
 
       charactersGroup.appendChild(g);
 
-      // Collect for label clustering
+      // Collect for label clustering - note: labels use SVG y
       labeledItems.push({
         x: pos.x,
-        y: pos.y + 220 * markerScale,
+        y: svgY + 220 * markerScale,
         label: char.name ? char.name.split(' ')[0] : '?',
         fontSize: 160,
         type: 'character'
@@ -2140,12 +2156,13 @@ async function startGame() {
   const dmAuthorStyle = dmAuthorStyleInput.value.trim() || null;
   const characterAuthorStyle = characterAuthorStyleInput.value.trim() || null;
   const worldSize = parseFloat(worldSizeInput.value) || 1;
+  const generateImages = enableImageGenCheckbox.checked;
 
   try {
     const response = await fetch('/api/game', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seed, models, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize })
+      body: JSON.stringify({ seed, models, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize, generateImages })
     });
 
     const data = await response.json();
@@ -2229,10 +2246,11 @@ async function advanceTurn() {
         showProgress(`Processing turn ${i + 1} of ${turnCount}...`);
       }
 
+      const generateImages = enableImageGenCheckbox.checked;
       const response = await fetch('/api/game/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dmInstructions: i === 0 ? dmInstructions : null })
+        body: JSON.stringify({ dmInstructions: i === 0 ? dmInstructions : null, generateImages })
       });
 
       const data = await response.json();

@@ -1,3 +1,12 @@
+import fs from 'fs';
+import { dirname } from 'path';
+import {
+  calculateStatChanges,
+  clampStats,
+  calculateEncumbrance,
+  validateInventoryChanges
+} from './behavior-config.js';
+
 // Proximity threshold in meters for communication
 const COMMUNICATION_RANGE = 20;
 
@@ -91,6 +100,157 @@ export class WorldState {
     this.authorStyle = null;       // Author whose style to emulate for novel generation (e.g., "Stephen King", "Hemingway")
     this.dmAuthorStyle = null;     // Author style for DM narrative responses (blank = neutral style)
     this.characterAuthorStyle = null; // Author style for character AI responses (blank = neutral style)
+    // Deterministic action logging
+    this.deterministicLogPath = null;
+  }
+
+  // Set the path for the deterministic action log file
+  setDeterministicLogPath(logPath, append = false) {
+    this.deterministicLogPath = logPath;
+    if (logPath) {
+      // Ensure directory exists
+      const dir = dirname(logPath);
+      fs.mkdirSync(dir, { recursive: true });
+
+      if (append && fs.existsSync(logPath)) {
+        // Append a session marker
+        fs.appendFileSync(logPath, `\n=== Session Resumed: ${new Date().toISOString()} ===\n\n`);
+      } else {
+        // Clear and start fresh
+        fs.writeFileSync(logPath, `=== Deterministic Actions Log ===\nStarted: ${new Date().toISOString()}\n\n`);
+      }
+    }
+  }
+
+  // Log a deterministic action with before/after values (only logs changes)
+  logDeterministic(turn, charName, action, before, after) {
+    if (!this.deterministicLogPath) return;
+
+    // Find what changed
+    const changes = [];
+    for (const key of Object.keys(after)) {
+      const beforeVal = before[key];
+      const afterVal = after[key];
+      if (beforeVal !== afterVal) {
+        changes.push(`${key}: ${beforeVal} → ${afterVal}`);
+      }
+    }
+
+    // Only log if something changed
+    if (changes.length === 0) return;
+
+    const logEntry = `  ${charName} | ${action}: ${changes.join(', ')}\n`;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log turn separator
+  logTurnStart(turn) {
+    if (!this.deterministicLogPath) return;
+
+    const timestamp = this.getTimeString();
+    const logEntry = `\n${'='.repeat(60)}\nTURN ${turn} - ${timestamp}\n${'='.repeat(60)}\n`;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log DM/player instructions
+  logDMInstructions(turn, instructions) {
+    if (!this.deterministicLogPath) return;
+    if (!instructions) return;
+
+    const logEntry = `\nDM INSTRUCTIONS: "${instructions}"\n`;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log character actions (what each character decided to do)
+  logCharacterActions(turn, characterActions) {
+    if (!this.deterministicLogPath) return;
+    if (!characterActions || characterActions.length === 0) return;
+
+    let logEntry = `\nCHARACTER ACTIONS:\n`;
+
+    for (const ca of characterActions) {
+      const name = ca.character?.name || 'Unknown';
+      logEntry += `  ${name}: ${ca.action || '(no action)'}\n`;
+      if (ca.dialogue) {
+        logEntry += `    Says: "${ca.dialogue}"\n`;
+      }
+    }
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log DM narrative
+  logNarrative(turn, narrative) {
+    if (!this.deterministicLogPath) return;
+    if (!narrative) return;
+
+    const logEntry = `\nNARRATIVE:\n${narrative}\n`;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log inventory changes
+  logInventoryChange(turn, charName, action, items, warnings = []) {
+    if (!this.deterministicLogPath) return;
+    if (items.length === 0 && warnings.length === 0) return;
+
+    let logEntry = `  ${charName} | ${action}: ${items.join(', ')}\n`;
+    if (warnings.length > 0) {
+      logEntry += `    Rejected: ${warnings.join('; ')}\n`;
+    }
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log a section header
+  logSection(header) {
+    if (!this.deterministicLogPath) return;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, `\n${header}:\n`);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
+  }
+
+  // Log movement
+  logMovement(charName, fromPos, toPos, description) {
+    if (!this.deterministicLogPath) return;
+
+    const logEntry = `  ${charName} | MOVEMENT: (${fromPos.x}, ${fromPos.y}) → (${toPos.x}, ${toPos.y}) ${description}\n`;
+
+    try {
+      fs.appendFileSync(this.deterministicLogPath, logEntry);
+    } catch (err) {
+      console.error('Failed to write to deterministic log:', err.message);
+    }
   }
 
   initialize(dmResponse) {
@@ -115,7 +275,19 @@ export class WorldState {
       console.error('DM response missing or empty characters array:', dmResponse.characters);
       throw new Error('No characters returned from initialization. The LLM may have refused the request.');
     }
-    this.characters = dmResponse.characters;
+    // Filter out invalid characters (must have id and name)
+    const validCharacters = dmResponse.characters.filter(c => {
+      if (!c || !c.id || !c.name) {
+        console.warn('Skipping invalid character (missing id or name):', c);
+        return false;
+      }
+      return true;
+    });
+    if (validCharacters.length === 0) {
+      console.error('No valid characters after filtering:', dmResponse.characters);
+      throw new Error('No valid characters returned from initialization (all missing id or name).');
+    }
+    this.characters = validCharacters;
     this.summary = dmResponse.worldsummary || 'The story begins.';
     this.history.push(dmResponse.narrative);
     if (dmResponse.time) {
@@ -140,7 +312,30 @@ export class WorldState {
       this.tensions = dmResponse.tensions;
     }
     if (Array.isArray(dmResponse.discoveredobjects)) {
-      this.discoveredObjects = dmResponse.discoveredobjects;
+      // Normalize discoveredObjects to ensure they have proper structure
+      this.discoveredObjects = dmResponse.discoveredobjects.map((obj, i) => {
+        // If it's just a string, convert to object
+        if (typeof obj === 'string') {
+          console.warn(`[Init] discoveredObject "${obj}" is a string, converting to object without position`);
+          return {
+            id: `obj_init_${i}`,
+            name: obj,
+            description: '',
+            position: null,
+            status: 'discovered',
+            discoveredTurn: 0
+          };
+        }
+        // Ensure required fields exist
+        return {
+          id: obj.id || `obj_init_${i}`,
+          name: obj.name || 'unknown object',
+          description: obj.description || '',
+          position: obj.position || null,
+          status: obj.status || 'discovered',
+          discoveredTurn: 0
+        };
+      });
     }
     if (Array.isArray(dmResponse.mapfeatures)) {
       this.mapFeatures = dmResponse.mapfeatures.map(f => ({
@@ -170,35 +365,197 @@ export class WorldState {
       }
     }
 
+    // Get duration from DM response (default to 15 minutes if not specified)
+    const durationMinutes = changes.durationminutes || 15;
+
+    // Log section header for world changes
+    this.logSection('WORLD CHANGES');
+
+    // IMPORTANT: Add discovered objects FIRST so inventory validation can see them
+    // This supports the split resolution flow where Call 1 adds objects and Call 2 picks them up
+    if (Array.isArray(changes.discoveredobjects)) {
+      for (const obj of changes.discoveredobjects) {
+        if (!obj || !obj.id) continue;
+        const existing = this.discoveredObjects.find(o => o.id === obj.id);
+        if (existing) {
+          // Update existing object
+          if (obj.position) existing.position = obj.position;
+          if (obj.description) existing.description = obj.description;
+          if (obj.status) existing.status = obj.status;
+        } else {
+          // Add new discovered object
+          this.discoveredObjects.push({
+            id: obj.id,
+            name: obj.name || obj.id,
+            description: obj.description || '',
+            position: obj.position || null,
+            status: obj.status || 'discovered',
+            discoveredTurn: this.turnNumber
+          });
+          console.log(`[Discovery] Added object: ${obj.name || obj.id}`);
+        }
+      }
+    }
+
     if (Array.isArray(changes.characterupdates)) {
       for (const update of changes.characterupdates) {
         if (!update || !update.id) continue;
         const character = this.characters.find(c => c.id === update.id);
         if (character) {
-          if (Array.isArray(update.inventoryadd)) {
-            character.inventory.push(...update.inventoryadd);
+          // Validate inventory changes before applying
+          const inventoryChanges = {
+            inventoryAdd: update.inventoryadd || [],
+            inventoryRemove: update.inventoryremove || []
+          };
+          const validated = validateInventoryChanges(inventoryChanges, this, character);
+
+          // Log any validation warnings
+          for (const warning of validated.warnings) {
+            console.warn(`[Inventory] ${warning}`);
           }
-          if (Array.isArray(update.inventoryremove)) {
+
+          // Log inventory additions
+          if (validated.inventoryAdd.length > 0 || validated.warnings.length > 0) {
+            this.logInventoryChange(this.turnNumber, character.name, 'INVENTORY_ADD', validated.inventoryAdd, validated.warnings);
+          }
+
+          // Apply validated inventory changes
+          if (validated.inventoryAdd.length > 0) {
+            character.inventory.push(...validated.inventoryAdd);
+          }
+          if (validated.inventoryRemove.length > 0) {
+            this.logInventoryChange(this.turnNumber, character.name, 'INVENTORY_REMOVE', validated.inventoryRemove, []);
             character.inventory = character.inventory.filter(
-              item => !update.inventoryremove.includes(item)
+              item => !validated.inventoryRemove.map(i => i.toLowerCase()).includes(item.toLowerCase())
             );
           }
+
           if (typeof update.statuschange === 'string' && update.statuschange) {
+            const oldStatus = character.status || 'normal';
+            if (oldStatus !== update.statuschange) {
+              this.logDeterministic(this.turnNumber, character.name, 'STATUS', { status: oldStatus }, { status: update.statuschange });
+            }
             character.status = update.statuschange;
           }
           if (typeof update.clothingchange === 'string' && update.clothingchange) {
+            const oldClothing = character.clothing || 'unknown';
+            if (oldClothing !== update.clothingchange) {
+              this.logDeterministic(this.turnNumber, character.name, 'CLOTHING', { clothing: oldClothing }, { clothing: update.clothingchange });
+            }
             character.clothing = update.clothingchange;
           }
-          if (update.statschange && typeof update.statschange === 'object') {
+          // Store the result of this character's last action for feedback on next turn
+          if (typeof update.lastactionresult === 'string' && update.lastactionresult) {
+            character.lastActionResult = update.lastactionresult;
+          } else {
+            // Clear if not provided (action had no notable result)
+            character.lastActionResult = null;
+          }
+
+          // HYBRID STAT SYSTEM: Use activity categories from LLM to calculate stats
+          // Check if update has activity-based fields (new system) or statschange (legacy)
+          const hasActivityFields = update.activitylevel || update.hydrationevent ||
+                                     update.nutritionevent || update.healthevent || update.mentalevent;
+
+          if (hasActivityFields) {
+            // New hybrid system: LLM categorizes, system calculates
             if (!character.stats) {
               character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
             }
+
+            // Capture before stats for logging
+            const beforeStats = {
+              stamina: character.stats.stamina,
+              hunger: character.stats.hunger,
+              thirst: character.stats.thirst,
+              health: character.stats.health,
+              sanity: character.stats.sanity,
+              fear: character.stats.fear,
+              anger: character.stats.anger
+            };
+
+            // Normalize update keys for calculation function
+            const normalizedUpdate = {
+              activityLevel: update.activitylevel || 'moderate',
+              hydrationEvent: update.hydrationevent || null,
+              nutritionEvent: update.nutritionevent || null,
+              healthEvent: update.healthevent || null,
+              injurySeverity: update.injuryseverity || null,
+              mentalEvent: update.mentalevent || null
+            };
+
+            // Get environment temperature for thirst calculation
+            const environment = {
+              temperature: this.environment?.temperature === 'hot' ? 35 :
+                           this.environment?.temperature === 'warm' ? 28 :
+                           this.environment?.temperature === 'cold' ? 10 :
+                           this.environment?.temperature === 'freezing' ? 0 : 25
+            };
+
+            // Calculate new stats based on activity categories
+            const newStats = calculateStatChanges(character, normalizedUpdate, durationMinutes, environment);
+
+            // Apply calculated stats (preserving ability stats which don't change)
+            character.stats.stamina = newStats.stamina;
+            character.stats.hunger = newStats.hunger;
+            character.stats.thirst = newStats.thirst;
+            character.stats.health = newStats.health;
+            character.stats.sanity = newStats.sanity;
+            character.stats.fear = newStats.fear;
+            character.stats.anger = newStats.anger;
+
+            // Build action description for logging
+            const actionParts = [`activity=${normalizedUpdate.activityLevel}`, `duration=${durationMinutes}min`];
+            if (normalizedUpdate.hydrationEvent) actionParts.push(`hydration=${normalizedUpdate.hydrationEvent}`);
+            if (normalizedUpdate.nutritionEvent) actionParts.push(`nutrition=${normalizedUpdate.nutritionEvent}`);
+            if (normalizedUpdate.healthEvent) actionParts.push(`health=${normalizedUpdate.healthEvent}${normalizedUpdate.injurySeverity ? '(' + normalizedUpdate.injurySeverity + ')' : ''}`);
+            if (normalizedUpdate.mentalEvent) actionParts.push(`mental=${normalizedUpdate.mentalEvent}`);
+
+            // Log stat changes (only logs if something changed)
+            this.logDeterministic(this.turnNumber, character.name, `STATS_CALC [${actionParts.join(', ')}]`, beforeStats, {
+              stamina: newStats.stamina,
+              hunger: newStats.hunger,
+              thirst: newStats.thirst,
+              health: newStats.health,
+              sanity: newStats.sanity,
+              fear: newStats.fear,
+              anger: newStats.anger
+            });
+
+            console.log(`[Stats] ${character.name}: activity=${normalizedUpdate.activityLevel}, duration=${durationMinutes}min -> stamina=${character.stats.stamina}, hunger=${character.stats.hunger}, thirst=${character.stats.thirst}`);
+          } else if (update.statschange && typeof update.statschange === 'object') {
+            // Legacy system: direct stat updates (for backwards compatibility)
+            if (!character.stats) {
+              character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
+            }
+
+            // Capture before stats for logging
+            const beforeLegacy = { ...character.stats };
+
             for (const [stat, value] of Object.entries(update.statschange)) {
               if (typeof value === 'number' && value >= 0 && value <= 100) {
                 character.stats[stat] = value;
               }
             }
+            // Clamp legacy stats too
+            character.stats = clampStats(character.stats);
+
+            // Log legacy stat changes
+            this.logDeterministic(this.turnNumber, character.name, 'STATS_LEGACY', beforeLegacy, character.stats);
           }
+
+          // Calculate encumbrance from inventory (ensure stats exists first)
+          if (!character.stats) {
+            character.stats = { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 };
+          }
+          const beforeEncumbrance = character.stats.encumbrance;
+          character.stats.encumbrance = calculateEncumbrance(character.inventory);
+
+          // Log encumbrance change if different
+          if (beforeEncumbrance !== character.stats.encumbrance) {
+            this.logDeterministic(this.turnNumber, character.name, 'ENCUMBRANCE', { encumbrance: beforeEncumbrance }, { encumbrance: character.stats.encumbrance });
+          }
+
           // Handle movement updates (direction + distance -> new position)
           // Supports: { direction, distance } OR { targetLocation: "feature_id_or_name" }
           if (update.movement && typeof update.movement === 'object') {
@@ -253,19 +610,28 @@ export class WorldState {
 
             // Apply movement
             if (dx !== 0 || dy !== 0) {
-              character.position = {
+              const newPos = {
                 x: currentPos.x + dx,
                 y: currentPos.y + dy
               };
+              // Log movement before applying
+              const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+              this.logMovement(character.name, currentPos, newPos, `(${distance}m)`);
+              character.position = newPos;
               console.log(`${movementLog} -> (${character.position.x}, ${character.position.y})`);
             }
           }
           // Legacy support: handle absolute position updates (positionchange)
           else if (update.positionchange && typeof update.positionchange === 'object') {
-            character.position = {
-              x: typeof update.positionchange.x === 'number' ? update.positionchange.x : (character.position?.x || 0),
-              y: typeof update.positionchange.y === 'number' ? update.positionchange.y : (character.position?.y || 0)
+            const currentPos = character.position || { x: 0, y: 0 };
+            const newPos = {
+              x: typeof update.positionchange.x === 'number' ? update.positionchange.x : currentPos.x,
+              y: typeof update.positionchange.y === 'number' ? update.positionchange.y : currentPos.y
             };
+            if (newPos.x !== currentPos.x || newPos.y !== currentPos.y) {
+              this.logMovement(character.name, currentPos, newPos, '(position set)');
+            }
+            character.position = newPos;
           }
           // Handle attitude updates
           if (update.attitudeschange && typeof update.attitudeschange === 'object') {
@@ -316,6 +682,8 @@ export class WorldState {
         this.time = { day: 1, hour: 8, minute: 0 };
       }
 
+      const oldTime = { ...this.time };
+
       // Validate time doesn't go backwards
       const newTime = changes.time;
       const currentMinutes = ((this.time.day ?? 1) * 24 * 60) + ((this.time.hour ?? 8) * 60) + (this.time.minute ?? 0);
@@ -338,6 +706,18 @@ export class WorldState {
           day++;
         }
         this.time = { day, hour, minute };
+      }
+
+      // Log time change
+      const formatTime = (t) => `Day ${t.day}, ${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`;
+      if (this.deterministicLogPath) {
+        const elapsed = newMinutes - currentMinutes;
+        const logEntry = `  TIME: ${formatTime(oldTime)} → ${formatTime(this.time)} (+${elapsed > 0 ? elapsed : 15}min)\n`;
+        try {
+          fs.appendFileSync(this.deterministicLogPath, logEntry);
+        } catch (err) {
+          console.error('Failed to write to deterministic log:', err.message);
+        }
       }
     }
 
@@ -389,29 +769,8 @@ export class WorldState {
       }
     }
 
-    // Handle discovered object updates
-    if (Array.isArray(changes.discoveredobjects)) {
-      for (const obj of changes.discoveredobjects) {
-        if (!obj || !obj.id) continue;
-        const existing = this.discoveredObjects.find(o => o.id === obj.id);
-        if (existing) {
-          // Update existing object
-          if (obj.position) existing.position = obj.position;
-          if (obj.description) existing.description = obj.description;
-          if (obj.status) existing.status = obj.status;
-        } else {
-          // Add new discovered object
-          this.discoveredObjects.push({
-            id: obj.id,
-            name: obj.name || obj.id,
-            description: obj.description || '',
-            position: obj.position || null,
-            status: obj.status || 'discovered',
-            discoveredTurn: this.turnNumber
-          });
-        }
-      }
-    }
+    // Note: discoveredObjects are now handled at the TOP of applyChanges
+    // to ensure they're available for inventory validation
 
     // Handle removed objects (picked up, destroyed, etc.)
     if (Array.isArray(changes.removedobjects)) {
@@ -486,7 +845,7 @@ export class WorldState {
 
   getStateSnapshot() {
     // Deep copy to prevent reference mutations affecting snapshots
-    // Note: mapFeatures is also stored in map.json for persistence
+    // Note: mapFeatures is stored in map.json only (not duplicated here)
     return JSON.parse(JSON.stringify({
       turnNumber: this.turnNumber,
       summary: this.summary,
@@ -507,9 +866,15 @@ export class WorldState {
       storyEnding: this.storyEnding,
       authorStyle: this.authorStyle,
       dmAuthorStyle: this.dmAuthorStyle,
-      characterAuthorStyle: this.characterAuthorStyle,
-      mapFeatures: this.mapFeatures
+      characterAuthorStyle: this.characterAuthorStyle
     }));
+  }
+
+  // Get full state including mapFeatures (for API responses)
+  getFullStateSnapshot() {
+    const snapshot = this.getStateSnapshot();
+    snapshot.mapFeatures = JSON.parse(JSON.stringify(this.mapFeatures || []));
+    return snapshot;
   }
 
   // Calculate distance between two positions in meters
@@ -571,6 +936,17 @@ export class WorldState {
       feature.discovered = true;
       feature.discoveredTurn = turn;
       console.log(`[Discovery] Map feature "${feature.name}" discovered on turn ${turn}`);
+
+      // Log discovery
+      if (this.deterministicLogPath) {
+        const pos = feature.position ? `(${feature.position.x}, ${feature.position.y})` : '';
+        const logEntry = `  DISCOVERY: ${feature.name} (${feature.type}) ${pos}\n`;
+        try {
+          fs.appendFileSync(this.deterministicLogPath, logEntry);
+        } catch (err) {
+          console.error('Failed to write to deterministic log:', err.message);
+        }
+      }
     }
   }
 

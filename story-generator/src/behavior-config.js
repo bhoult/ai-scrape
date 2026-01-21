@@ -501,3 +501,365 @@ export function generateAttitudeGuidelinesText(config = attitudeGuidelines) {
   }
   return lines.join('\n');
 }
+
+// ============================================================================
+// HYBRID STAT CALCULATION SYSTEM
+// LLM categorizes actions, system calculates actual stat changes
+// ============================================================================
+
+// Activity levels and their stamina rates (% per hour)
+export const ACTIVITY_LEVELS = {
+  rest: { staminaRate: +20, thirstMultiplier: 0.5, hungerRate: 1, description: 'Sleeping, resting, meditating' },
+  light: { staminaRate: +5, thirstMultiplier: 0.8, hungerRate: 2, description: 'Sitting, light activity, vehicle travel' },
+  moderate: { staminaRate: -3, thirstMultiplier: 1.0, hungerRate: 3, description: 'Walking, searching, light work' },
+  strenuous: { staminaRate: -12, thirstMultiplier: 1.5, hungerRate: 5, description: 'Running, fighting, climbing, swimming' },
+  extreme: { staminaRate: -25, thirstMultiplier: 2.0, hungerRate: 8, description: 'Sprinting, intense combat, flying, extreme exertion' }
+};
+
+// Hydration events
+export const HYDRATION_EVENTS = {
+  drinking: -35,      // Drinking water reduces thirst significantly
+  dehydrating: +20    // Vomiting, bleeding, etc. increases thirst
+};
+
+// Nutrition events
+export const NUTRITION_EVENTS = {
+  eating: -40,        // Eating a meal reduces hunger significantly
+  vomiting: +15       // Vomiting increases hunger
+};
+
+// Health events and injury severity
+export const HEALTH_EVENTS = {
+  injured: { minor: -5, moderate: -15, severe: -30 },
+  healing: +2,        // Per hour of rest
+  resting: +1         // Per hour of light rest
+};
+
+// Mental events and their effects
+export const MENTAL_EVENTS = {
+  stressed: { sanity: -3, fear: +5, anger: +3 },
+  relieved: { sanity: +5, fear: -10, anger: -5 },
+  terrified: { sanity: -8, fear: +25, anger: 0 },
+  enraged: { sanity: -5, fear: -5, anger: +30 },
+  calm: { sanity: +3, fear: -3, anger: -3 }
+};
+
+// Base thirst rate (% per hour) - modified by temperature and activity
+export const BASE_THIRST_RATE = 3;
+export const HOT_THIRST_RATE = 5;  // When temperature > 30°C
+export const TEMPERATURE_HOT_THRESHOLD = 30;
+
+/**
+ * Calculate stat changes based on LLM-provided activity categories
+ *
+ * @param {Object} character - Character object with current stats
+ * @param {Object} update - LLM-provided update with activity categories
+ * @param {number} durationMinutes - Duration of the action in minutes
+ * @param {Object} environment - Environment info (temperature, etc.)
+ * @returns {Object} - Updated stats object
+ */
+export function calculateStatChanges(character, update, durationMinutes, environment = {}) {
+  const hours = durationMinutes / 60;
+  const stats = { ...character.stats };
+
+  // Get activity level (default to moderate if not specified)
+  const activityLevel = update.activityLevel || 'moderate';
+  const activity = ACTIVITY_LEVELS[activityLevel] || ACTIVITY_LEVELS.moderate;
+
+  // STAMINA - based on activity level
+  stats.stamina = (stats.stamina ?? 50) + (activity.staminaRate * hours);
+
+  // THIRST - base rate + environment + activity modifier
+  const isHot = (environment.temperature ?? 25) > TEMPERATURE_HOT_THRESHOLD;
+  const baseThirstRate = isHot ? HOT_THIRST_RATE : BASE_THIRST_RATE;
+  stats.thirst = (stats.thirst ?? 0) + (baseThirstRate * activity.thirstMultiplier * hours);
+
+  // Hydration events (drinking/dehydrating)
+  if (update.hydrationEvent && HYDRATION_EVENTS[update.hydrationEvent] !== undefined) {
+    stats.thirst += HYDRATION_EVENTS[update.hydrationEvent];
+  }
+
+  // HUNGER - slower, based on activity
+  stats.hunger = (stats.hunger ?? 0) + (activity.hungerRate * hours);
+
+  // Nutrition events (eating/vomiting)
+  if (update.nutritionEvent && NUTRITION_EVENTS[update.nutritionEvent] !== undefined) {
+    stats.hunger += NUTRITION_EVENTS[update.nutritionEvent];
+  }
+
+  // HEALTH - injuries and healing
+  if (update.healthEvent) {
+    if (update.healthEvent === 'injured') {
+      const severity = update.injurySeverity || 'moderate';
+      const damage = HEALTH_EVENTS.injured[severity] || HEALTH_EVENTS.injured.moderate;
+      stats.health = (stats.health ?? 100) + damage;
+    } else if (update.healthEvent === 'healing') {
+      stats.health = (stats.health ?? 100) + (HEALTH_EVENTS.healing * hours);
+    } else if (update.healthEvent === 'resting') {
+      stats.health = (stats.health ?? 100) + (HEALTH_EVENTS.resting * hours);
+    }
+  }
+
+  // MENTAL STATS - based on events
+  if (update.mentalEvent && MENTAL_EVENTS[update.mentalEvent]) {
+    const effects = MENTAL_EVENTS[update.mentalEvent];
+    stats.sanity = (stats.sanity ?? 100) + effects.sanity;
+    stats.fear = (stats.fear ?? 0) + effects.fear;
+    stats.anger = (stats.anger ?? 0) + effects.anger;
+  }
+
+  // Clamp all stats to valid range
+  return clampStats(stats);
+}
+
+/**
+ * Clamp all stats to valid 0-100 range
+ *
+ * @param {Object} stats - Stats object to clamp
+ * @returns {Object} - Stats with values clamped to 0-100
+ */
+export function clampStats(stats) {
+  const clampedStats = { ...stats };
+  const STAT_NAMES = ['health', 'stamina', 'hunger', 'thirst', 'sanity', 'anger', 'fear', 'encumbrance'];
+
+  for (const stat of STAT_NAMES) {
+    if (clampedStats[stat] !== undefined) {
+      clampedStats[stat] = Math.max(0, Math.min(100, Math.round(clampedStats[stat])));
+    }
+  }
+
+  return clampedStats;
+}
+
+/**
+ * Calculate effective ability stats with penalties from condition
+ *
+ * @param {Object} character - Character object with stats
+ * @returns {Object} - Effective strength, dexterity, intelligence
+ */
+export function getEffectiveAbilityStats(character) {
+  const stats = character.stats || {};
+  const health = stats.health ?? 100;
+  const stamina = stats.stamina ?? 100;
+  const hunger = stats.hunger ?? 0;
+  const thirst = stats.thirst ?? 0;
+
+  let strength = stats.strength ?? 50;
+  let dexterity = stats.dexterity ?? 50;
+  let intelligence = stats.intelligence ?? 50;
+
+  // Health penalties
+  if (health < 30) {
+    strength *= 0.5;
+    dexterity *= 0.5;
+  } else if (health < 50) {
+    strength *= 0.75;
+    dexterity *= 0.75;
+  }
+
+  // Stamina penalties
+  if (stamina < 20) {
+    strength *= 0.5;
+    dexterity *= 0.6;
+  } else if (stamina < 40) {
+    strength *= 0.8;
+    dexterity *= 0.8;
+  }
+
+  // Hunger/Thirst penalties
+  if (hunger > 80 || thirst > 80) {
+    intelligence *= 0.7;
+    strength *= 0.8;
+  }
+
+  return {
+    strength: Math.round(strength),
+    dexterity: Math.round(dexterity),
+    intelligence: Math.round(intelligence)
+  };
+}
+
+/**
+ * Calculate encumbrance from inventory
+ *
+ * @param {Array} inventory - Array of item names
+ * @returns {number} - Encumbrance value 0-100
+ */
+export function calculateEncumbrance(inventory) {
+  if (!Array.isArray(inventory) || inventory.length === 0) {
+    return 0;
+  }
+
+  const LIGHT_ITEMS = ['knife', 'lighter', 'matches', 'compass', 'map', 'bandage', 'key', 'note', 'photo'];
+  const HEAVY_ITEMS = ['tent', 'axe', 'rifle', 'pack', 'toolbox', 'generator', 'battery', 'tank', 'barrel'];
+
+  let encumbrance = 0;
+  for (const item of inventory) {
+    const itemLower = item.toLowerCase();
+    if (LIGHT_ITEMS.some(w => itemLower.includes(w))) {
+      encumbrance += 2;
+    } else if (HEAVY_ITEMS.some(w => itemLower.includes(w))) {
+      encumbrance += 15;
+    } else {
+      encumbrance += 5;  // default medium weight
+    }
+  }
+
+  return Math.min(100, encumbrance);
+}
+
+/**
+ * Validate inventory changes against world state
+ *
+ * @param {Object} changes - Inventory changes (inventoryAdd, inventoryRemove)
+ * @param {Object} worldState - Current world state
+ * @param {Object} character - Character making the changes
+ * @returns {Object} - Validated changes with invalid items removed
+ */
+// Maximum distance (meters) a character can be from an object to pick it up
+const PICKUP_RANGE = 50;
+
+// Calculate distance between two positions
+function getDistance(pos1, pos2) {
+  if (!pos1 || !pos2) return Infinity;
+  const dx = (pos1.x || 0) - (pos2.x || 0);
+  const dy = (pos1.y || 0) - (pos2.y || 0);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+export function validateInventoryChanges(changes, worldState, character) {
+  const validated = {
+    inventoryAdd: [],
+    inventoryRemove: [],
+    warnings: []
+  };
+
+  const charPos = character.position || { x: 0, y: 0 };
+
+  // Build list of valid sources for items (with proximity check)
+  const validSources = new Set();
+  // Track items that exist but are too far away
+  const tooFarItems = new Map(); // name -> distance
+
+  // Add discovered objects (only if within pickup range)
+  if (worldState.discoveredObjects) {
+    for (const obj of worldState.discoveredObjects) {
+      if (obj.name) {
+        const distance = getDistance(charPos, obj.position);
+        if (distance <= PICKUP_RANGE) {
+          validSources.add(obj.name.toLowerCase());
+        } else if (obj.position) {
+          tooFarItems.set(obj.name.toLowerCase(), Math.round(distance));
+        }
+      }
+    }
+  }
+
+  // Add location items (assumed to be at current location, so always in range)
+  if (worldState.currentLocation?.items) {
+    for (const item of worldState.currentLocation.items) {
+      validSources.add(item.toLowerCase());
+    }
+  }
+
+  // Add items from nearby characters (for trading/taking - must be within communication range)
+  if (worldState.characters) {
+    for (const char of worldState.characters) {
+      if (char.id !== character.id && char.inventory) {
+        const distance = getDistance(charPos, char.position);
+        if (distance <= PICKUP_RANGE) {
+          for (const item of char.inventory) {
+            validSources.add(item.toLowerCase());
+          }
+        }
+      }
+    }
+  }
+
+  // Add items from map features within range
+  if (worldState.mapFeatures) {
+    for (const feature of worldState.mapFeatures) {
+      if (feature.items) {
+        const distance = getDistance(charPos, feature.position);
+        if (distance <= PICKUP_RANGE) {
+          for (const item of feature.items) {
+            validSources.add(item.toLowerCase());
+          }
+        } else if (feature.position) {
+          for (const item of feature.items) {
+            tooFarItems.set(item.toLowerCase(), Math.round(distance));
+          }
+        }
+      }
+    }
+  }
+
+  // Validate items to add
+  for (const item of (changes.inventoryAdd || [])) {
+    const itemLower = item.toLowerCase();
+    if (validSources.has(itemLower)) {
+      validated.inventoryAdd.push(item);
+    } else if (tooFarItems.has(itemLower)) {
+      validated.warnings.push(`Rejected "${item}" - too far away (${tooFarItems.get(itemLower)}m, max ${PICKUP_RANGE}m)`);
+    } else {
+      validated.warnings.push(`Rejected invalid item add: "${item}" - not found in world`);
+    }
+  }
+
+  // Validate items to remove (must be in character's inventory)
+  const characterInventory = new Set((character.inventory || []).map(i => i.toLowerCase()));
+  for (const item of (changes.inventoryRemove || [])) {
+    if (characterInventory.has(item.toLowerCase())) {
+      validated.inventoryRemove.push(item);
+    } else {
+      validated.warnings.push(`Rejected invalid item remove: "${item}" - not in inventory`);
+    }
+  }
+
+  return validated;
+}
+
+/**
+ * Generate activity level descriptions for DM prompt
+ *
+ * @returns {string} - Formatted text describing activity levels
+ */
+export function generateActivityLevelText() {
+  const lines = ['ACTIVITY LEVELS (choose one based on the character\'s actions):'];
+  for (const [level, info] of Object.entries(ACTIVITY_LEVELS)) {
+    lines.push(`- ${level}: ${info.description}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Generate event categories text for DM prompt
+ *
+ * @returns {string} - Formatted text describing event categories
+ */
+export function generateEventCategoriesText() {
+  const lines = [
+    'EVENT CATEGORIES (set to appropriate value if event occurred, null otherwise):',
+    '',
+    'hydrationEvent: "drinking" | "dehydrating" | null',
+    '  - drinking: Character drank water or other fluids',
+    '  - dehydrating: Character lost fluids (vomiting, bleeding heavily)',
+    '',
+    'nutritionEvent: "eating" | "vomiting" | null',
+    '  - eating: Character ate food',
+    '  - vomiting: Character vomited',
+    '',
+    'healthEvent: "injured" | "healing" | "resting" | null (if injured, also set injurySeverity: "minor" | "moderate" | "severe")',
+    '  - injured: Character was hurt (set injurySeverity too)',
+    '  - healing: Character received medical treatment',
+    '  - resting: Character is resting and recovering naturally',
+    '',
+    'mentalEvent: "stressed" | "relieved" | "terrified" | "enraged" | "calm" | null',
+    '  - stressed: Stressful situation, minor anxiety',
+    '  - relieved: Danger passed, good news, safety found',
+    '  - terrified: Extreme fear, horror, mortal danger',
+    '  - enraged: Extreme anger, fury',
+    '  - calm: Peaceful situation, meditation, relaxation'
+  ];
+  return lines.join('\n');
+}

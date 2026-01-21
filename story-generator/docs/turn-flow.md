@@ -8,462 +8,747 @@ The story generator uses multiple AI agents coordinated through the Fireworks AP
 
 1. **DM Agent** - The Dungeon Master that initializes the world and resolves actions
 2. **Player Agents** - One per character, decides what each character does
-3. **Verification Agent** - Updates character stats after each turn
-4. **Image Generator** - Creates scene illustrations (Flux model)
+3. **Image Generator** - Creates scene illustrations (Z-Image-Turbo model via local GPU)
+4. **Novel Writer** - Generates prose chapters at day boundaries (optional)
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              STORY GENERATOR                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
+│  │  DM Agent    │    │ Player Agent │    │ Player Agent │  ... (up to 7)    │
+│  │  (dm model)  │    │ (char model) │    │ (char model) │                   │
+│  └──────────────┘    └──────────────┘    └──────────────┘                   │
+│         │                   │                   │                            │
+│         └───────────────────┼───────────────────┘                            │
+│                             │                                                │
+│                    ┌────────▼────────┐                                       │
+│                    │   World State   │                                       │
+│                    │   (in memory)   │                                       │
+│                    └────────┬────────┘                                       │
+│                             │                                                │
+│    ┌────────────────────────┼────────────────────────────┐                   │
+│    │                        │                            │                   │
+│    ▼                        ▼                            ▼                   │
+│  ┌──────────┐    ┌──────────────────┐    ┌──────────────────┐               │
+│  │state.json│    │ narrative.json   │    │    map.json      │               │
+│  │worldState│    │ history, scenes  │    │ features, paths  │               │
+│  └──────────┘    └──────────────────┘    └──────────────────┘               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Initialization Flow
 
-When a new story is started with a seed, the DM Agent initializes the world.
+When a new story is started with a seed:
 
-### 1. DM Init Call
-
-**Role:** `dm-init`
-
-**System Prompt:**
 ```
-You are a Dungeon Master narrating an interactive story from a third-person
-perspective. You observe and describe world events as an omniscient narrator.
-```
-
-**User Prompt (example):**
-```
-Parse the following story seed and create the initial world state. Extract
-characters, setting, situation, and the overall story goal.
-
-SEED:
-Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an
-engineer. They must find water and shelter.
-
-Respond with a JSON object containing:
-{
-  "narrative": "Opening paragraph...",
-  "sceneDescription": "Visual description for illustration...",
-  "time": { "day": 1, "hour": 8, "minute": 0 },
-  "environment": { ... },
-  "storyGoal": "...",
-  "characters": [ ... ],
-  ...
-}
-```
-
-**Response (example):**
-```json
-{
-  "narrative": "The scorching sun beat down on the wreckage of Flight 247, its twisted metal frame half-buried in the golden sand dunes. Sarah wiped the sweat from her brow as she assessed the situation, her medical training kicking in automatically. Beside her, Mike surveyed the debris field, already calculating what might be salvageable.",
-  "sceneDescription": "Two weary survivors stand beside smoking plane wreckage in a vast desert landscape, harsh midday sun casting sharp shadows on golden sand dunes",
-  "time": { "day": 1, "hour": 14, "minute": 30 },
-  "environment": {
-    "type": "desert",
-    "terrain": "sandy dunes with scattered rock formations",
-    "lighting": "bright harsh sunlight",
-    "weather": "clear",
-    "temperature": "hot"
-  },
-  "storyGoal": "Survive the desert and find rescue",
-  "narrativeArc": "Introduction - characters assess their dire situation",
-  "majorEvents": ["Plane crashed in remote desert"],
-  "tensions": ["No water supply", "Extreme heat", "Unknown location", "No communication"],
-  "location": {
-    "id": "crash_site",
-    "name": "Plane Crash Site",
-    "description": "The scattered wreckage of a small passenger plane lies across the dunes...",
-    "exits": ["north", "east", "south", "west"],
-    "items": ["twisted metal", "luggage", "first aid kit"],
-    "npcs": []
-  },
-  "characters": [
-    {
-      "id": "char_sarah",
-      "name": "Sarah",
-      "appearance": {
-        "gender": "female",
-        "age": "mid-30s",
-        "height": "average",
-        "build": "athletic",
-        "hairColor": "dark brown",
-        "hairLength": "medium",
-        "eyeColor": "brown",
-        "skinTone": "olive"
-      },
-      "clothing": "torn business casual - white blouse, gray slacks, sensible flats",
-      "personality": "Calm under pressure, analytical, compassionate",
-      "goals": "Keep everyone alive, find water and medical supplies",
-      "inventory": ["pen", "small notebook"],
-      "status": "minor cuts and bruises",
-      "stats": {
-        "health": 85,
-        "stamina": 70,
-        "hunger": 20,
-        "thirst": 35,
-        "strength": 45,
-        "dexterity": 55,
-        "encumbrance": 5,
-        "sanity": 90,
-        "anger": 10,
-        "fear": 25
-      },
-      "position": { "x": 0, "y": 5 }
-    },
-    {
-      "id": "char_mike",
-      "name": "Mike",
-      "position": { "x": 3, "y": 2 },
-      ...
-    }
-  ],
-  "worldSummary": "Two survivors of a plane crash must find water and shelter in an unforgiving desert."
-}
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           User provides story seed                           │
+│            "Two survivors of a plane crash in the desert..."                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              DM INIT CALL                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │ • Parse seed and create initial world state                          │    │
+│  │ • Generate 5-8 map features (water sources, shelters, landmarks)     │    │
+│  │ • Create characters with stats, inventory, positions, attitudes      │    │
+│  │ • Set up victory conditions and story goal                           │    │
+│  │ • Write opening narrative                                            │    │
+│  │ • Determine starting time and environment                            │    │
+│  │ • Select author style (if not specified)                             │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           WORLD STATE INITIALIZED                            │
+│  • Characters array populated                                                │
+│  • Map features placed (most undiscovered)                                   │
+│  • Starting location established                                             │
+│  • Character paths initialized at (0, 0)                                     │
+│  • Auto-discover any visible features from starting positions                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         GENERATE OPENING IMAGE                               │
+│  • Build prompt from sceneFocus + sceneVisuals + environment                 │
+│  • Run draw.py with Z-Image-Turbo model                                      │
+│  • Save to stories/{id}/images/turn-000.jpg                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              SAVE INITIAL STATE                              │
+│  • state.json - world state snapshot                                         │
+│  • narrative.json - story content and history                                │
+│  • map.json - features and character paths                                   │
+│  • history/turn-000.json - turn 0 snapshot for rollback                      │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Turn Flow
+## Turn Flow - Main Loop
 
-Each turn follows this sequence:
+Each turn follows a two-phase concurrent system for realistic character communication:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Human clicks "Next Turn"                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. PLAYER AGENTS (parallel)                                │
-│     - Each character decides their action                    │
-│     - Runs simultaneously for all characters                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. DM AGENT - RESOLUTION                                   │
-│     - Receives all character actions                         │
-│     - Resolves what happens based on stats                   │
-│     - Generates narrative and world changes                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. VERIFICATION AGENT                                       │
-│     - Updates character stats based on narrative             │
-│     - Tracks hunger, thirst, stamina, mental state           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. IMAGE GENERATOR                                          │
-│     - Creates illustration from scene description            │
-│     - Uses Flux model via Fireworks API                      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. SAVE & UPDATE UI                                         │
-│     - Save turn snapshot for rollback                        │
-│     - Update story display                                   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Human clicks "Next Turn"                             │
+│                    (optional: provides DM instructions)                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  0. COLLECT PREVIOUS TURN INFO                                               │
+│     For each character, gather:                                              │
+│     • Actions and dialogue from nearby characters last turn                  │
+│     • lastActionResult - what happened from THEIR action                     │
+│     • Only from characters within 20m communication range                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│   ══════════════════ PHASE 1: THINK AND TALK ══════════════════             │
+│                                                                              │
+│   All player agents run IN PARALLEL (Promise.all)                            │
+│                                                                              │
+│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐             │
+│   │   Sarah Agent   │  │   Mike Agent    │  │   NPC Agent     │             │
+│   │                 │  │                 │  │                 │             │
+│   │ INPUT:          │  │ INPUT:          │  │ INPUT:          │             │
+│   │ • Character     │  │ • Character     │  │ • Character     │             │
+│   │ • World state   │  │ • World state   │  │ • World state   │             │
+│   │ • Recent events │  │ • Recent events │  │ • Recent events │             │
+│   │ • Last action   │  │ • Last action   │  │ • Last action   │             │
+│   │   result        │  │   result        │  │   result        │             │
+│   │ • What nearby   │  │ • What nearby   │  │ • What nearby   │             │
+│   │   chars did     │  │   chars did     │  │   chars did     │             │
+│   │                 │  │                 │  │                 │             │
+│   │ OUTPUT:         │  │ OUTPUT:         │  │ OUTPUT:         │             │
+│   │ • thinking      │  │ • thinking      │  │ • thinking      │             │
+│   │ • intendedAction│  │ • intendedAction│  │ • intendedAction│             │
+│   │ • speech        │  │ • speech        │  │ • speech        │             │
+│   └────────┬────────┘  └────────┬────────┘  └────────┬────────┘             │
+│            │                    │                    │                       │
+│            └────────────────────┼────────────────────┘                       │
+│                                 │                                            │
+│                                 ▼                                            │
+│                    ┌────────────────────────┐                                │
+│                    │   COLLECT ALL SPEECH   │                                │
+│                    │   Build speech map by  │                                │
+│                    │   character ID         │                                │
+│                    └────────────────────────┘                                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1.5 DISTRIBUTE SPEECH                                                       │
+│      For each character, filter speech to only nearby characters (≤20m)      │
+│                                                                              │
+│      Sarah at (0, 5)  ─────  Mike at (3, 2)  ───✕───  NPC at (100, 50)       │
+│         │                       │                         │                  │
+│         └──── can hear ────────►│                         │                  │
+│         │◄──── can hear ────────┘                         │                  │
+│         │                                                 │                  │
+│         └──────────── too far to hear ───────────────────►│                  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│   ════════════════════ PHASE 2: ACTION ════════════════════                 │
+│                                                                              │
+│   All player agents run IN PARALLEL (Promise.all)                            │
+│                                                                              │
+│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐             │
+│   │   Sarah Agent   │  │   Mike Agent    │  │   NPC Agent     │             │
+│   │                 │  │                 │  │                 │             │
+│   │ INPUT:          │  │ INPUT:          │  │ INPUT:          │             │
+│   │ • All Phase 1   │  │ • All Phase 1   │  │ • All Phase 1   │             │
+│   │   context       │  │   context       │  │   context       │             │
+│   │ • HEARD: Mike   │  │ • HEARD: Sarah  │  │ • HEARD: none   │             │
+│   │   says "..."    │  │   says "..."    │  │   (too far)     │             │
+│   │                 │  │                 │  │                 │             │
+│   │ OUTPUT:         │  │ OUTPUT:         │  │ OUTPUT:         │             │
+│   │ • thinking      │  │ • thinking      │  │ • thinking      │             │
+│   │ • action        │  │ • action        │  │ • action        │             │
+│   │ • dialogue      │  │ • dialogue      │  │ • dialogue      │             │
+│   └────────┬────────┘  └────────┬────────┘  └────────┬────────┘             │
+│            │                    │                    │                       │
+│            └────────────────────┼────────────────────┘                       │
+│                                 │                                            │
+│                                 ▼                                            │
+│                    ┌────────────────────────┐                                │
+│                    │  COLLECT ALL ACTIONS   │                                │
+│                    │  Record dialogue for   │                                │
+│                    │  next turn's context   │                                │
+│                    └────────────────────────┘                                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│   ════════════════════ DM RESOLUTION ════════════════════                   │
+│                                                                              │
+│   Single call to DM agent with ALL character actions                         │
+│                                                                              │
+│   INPUT:                                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ • Current world state (characters, location, environment)           │   │
+│   │ • All character actions and dialogue from Phase 2                   │   │
+│   │ • All character speech from Phase 1 (for narrative inclusion)       │   │
+│   │ • DM instructions (if provided by user)                             │   │
+│   │ • Character positions and paths for distance calculations           │   │
+│   │ • Map features with distances to each character                     │   │
+│   │ • Victory conditions to check                                       │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   DM DETERMINES:                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ • What succeeds, fails, or has unexpected outcomes                  │   │
+│   │ • Movement results (new positions via direction+distance)           │   │
+│   │ • Activity levels for each character (rest/light/moderate/etc)      │   │
+│   │ • Events that affect stats (drinking, eating, injuries, etc)        │   │
+│   │ • lastActionResult for EACH character (explicit feedback)           │   │
+│   │ • Inventory changes (items picked up, used, lost)                   │   │
+│   │ • Clothing and status changes                                       │   │
+│   │ • Map feature discoveries                                           │   │
+│   │ • New characters to introduce (up to 7 total)                       │   │
+│   │ • Turn duration in minutes                                          │   │
+│   │ • Story arc updates (tensions, major events)                        │   │
+│   │ • Whether story ends (victory/defeat/other)                         │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   OUTPUT:                                                                    │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ {                                                                   │   │
+│   │   "narrative": "What happens this turn...",                         │   │
+│   │   "sceneFocus": "characters|landscape|object|phenomenon",           │   │
+│   │   "sceneVisuals": { "characterAction": "...", ... },                │   │
+│   │   "durationMinutes": 30,                                            │   │
+│   │   "arcUpdates": { "narrativeArc": "...", "tensions": [...] },       │   │
+│   │   "worldChanges": {                                                 │   │
+│   │     "characterUpdates": [{                                          │   │
+│   │       "id": "sarah",                                                │   │
+│   │       "lastActionResult": "Found the water bottle intact...",       │   │
+│   │       "activityLevel": "moderate",                                  │   │
+│   │       "hydrationEvent": "drinking",                                 │   │
+│   │       "movement": { "targetLocation": "Rocky Oasis" },              │   │
+│   │       "inventoryAdd": ["water bottle"],                             │   │
+│   │       ...                                                           │   │
+│   │     }],                                                             │   │
+│   │     "discoveredMapFeatures": ["feat_1"],                            │   │
+│   │     ...                                                             │   │
+│   │   },                                                                │   │
+│   │   "worldSummary": "Updated situation..."                            │   │
+│   │ }                                                                   │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│   ════════════════ APPLY WORLD CHANGES (DETERMINISTIC) ════════════════     │
+│                                                                              │
+│   The system (not LLM) calculates stats based on DM's activity categories:   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    HYBRID STAT CALCULATION                          │   │
+│   │                                                                     │   │
+│   │   DM provides:              System calculates:                      │   │
+│   │   ─────────────             ──────────────────                      │   │
+│   │   activityLevel: "strenuous" ──► stamina -= 12/hour                 │   │
+│   │                               ──► thirst += 7.5/hour (×1.5 mult)    │   │
+│   │                               ──► hunger += 5/hour                  │   │
+│   │                                                                     │   │
+│   │   hydrationEvent: "drinking" ──► thirst -= 30                       │   │
+│   │   nutritionEvent: "eating"   ──► hunger -= 40                       │   │
+│   │   healthEvent: "injured"     ──► health -= 5-30 (by severity)       │   │
+│   │   mentalEvent: "terrified"   ──► sanity -=8, fear +=25              │   │
+│   │                                                                     │   │
+│   │   All stats clamped to 0-100 range                                  │   │
+│   │   All changes logged to deterministic.log                           │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    MOVEMENT CALCULATION                             │   │
+│   │                                                                     │   │
+│   │   Option 1: targetLocation                                          │   │
+│   │   movement: { "targetLocation": "Rocky Oasis" }                     │   │
+│   │   ──► System finds feature position                                 │   │
+│   │   ──► Calculates direction and distance to target                   │   │
+│   │   ──► Moves up to 1200m toward target (one turn of walking)         │   │
+│   │   ──► Snaps to target if within range                               │   │
+│   │                                                                     │   │
+│   │   Option 2: direction + distance                                    │   │
+│   │   movement: { "direction": "northeast", "distance": 500 }           │   │
+│   │   ──► System converts direction to heading (NE = 45°)               │   │
+│   │   ──► Calculates dx, dy from polar coordinates                      │   │
+│   │   ──► Updates character position                                    │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    OTHER DETERMINISTIC UPDATES                      │   │
+│   │                                                                     │   │
+│   │   • Inventory validation (items must exist in world)                │   │
+│   │   • Encumbrance calculation from inventory                          │   │
+│   │   • Time advancement (current time + duration, never backwards)     │   │
+│   │   • Map feature auto-discovery (within sight distance)              │   │
+│   │   • lastActionResult stored on each character                       │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         VERIFICATION AGENT CALL                              │
+│                                                                              │
+│   Reviews narrative and updates attitudes/stats the DM might have missed:    │
+│   • Clothing changes (torn, removed, changed)                                │
+│   • Attitude changes between characters                                      │
+│   • Additional stat adjustments based on narrative events                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           POST-PROCESSING                                    │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ INTIMACY EFFECTS                                                    │   │
+│   │ If narrative contains intimacy keywords + characters are close:     │   │
+│   │ ──► Reduce mutual attraction by 1/3                                 │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ STAT-BASED STATUS EFFECTS                                           │   │
+│   │ Auto-update status based on extreme stat values:                    │   │
+│   │ • stamina ≤ 0 ──► "collapsed from exhaustion"                       │   │
+│   │ • thirst ≥ 95 ──► "collapsing from dehydration"                     │   │
+│   │ • sanity ≤ 20 ──► "having a mental breakdown"                       │   │
+│   │ • fear ≥ 90 ──► "paralyzed with terror"                             │   │
+│   │ • etc.                                                              │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ DEATH PROCESSING                                                    │   │
+│   │ For characters with health ≤ 0:                                     │   │
+│   │ ──► Convert to "dead body of {name}" object                         │   │
+│   │ ──► Transfer inventory to body (can be looted)                      │   │
+│   │ ──► Remove player agent                                             │   │
+│   │ ──► Record death as major event                                     │   │
+│   │                                                                     │   │
+│   │ If ALL characters dead:                                             │   │
+│   │ ──► Trigger story ending (defeat)                                   │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │ STORY ENDING CHECK                                                  │   │
+│   │ If DM set storyEnding or all characters dead:                       │   │
+│   │ ──► Mark story as complete                                          │   │
+│   │ ──► Store ending type and summary                                   │   │
+│   │ ──► Generate final novel chapter                                    │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           IMAGE GENERATION                                   │
+│                                                                              │
+│   Build prompt based on sceneFocus:                                          │
+│   • "characters" ──► Full character descriptions + action + environment      │
+│   • "landscape" ──► Environment only (no characters)                         │
+│   • "object" ──► Object description + discovered objects + environment       │
+│   • "phenomenon" ──► Weather/event description + narrative context           │
+│                                                                              │
+│   ──► Run draw.py with Z-Image-Turbo model                                   │
+│   ──► Save to stories/{id}/images/turn-{N}.jpg                               │
+│   ──► Retry up to 3 times on failure                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           NOVEL GENERATION (conditional)                     │
+│                                                                              │
+│   Triggered when:                                                            │
+│   • Day changes (new day starts) ──► Generate chapter for completed day      │
+│   • 40 turns pass without day change ──► Generate mid-day chapter            │
+│   • Story ends ──► Generate final chapter                                    │
+│                                                                              │
+│   Uses narrator model to transform game events into prose                    │
+│   Written in configured author's style (e.g., "Stephen King")                │
+│   Saved to stories/{id}/novel.md                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              SAVE & RESPOND                                  │
+│                                                                              │
+│   Save:                                                                      │
+│   • state.json - current world state                                         │
+│   • narrative.json - story content, history, scene descriptions              │
+│   • map.json - features, character paths, distances                          │
+│   • history/turn-{N}.json - snapshot for rollback                            │
+│   • story.md - human-readable markdown with images                           │
+│                                                                              │
+│   Return to client:                                                          │
+│   • Turn number and narrative                                                │
+│   • Think/talk results (thinking, intended action, speech, observed)         │
+│   • Action results (thinking, action, dialogue, heard speech)                │
+│   • Updated world state                                                      │
+│   • Character paths for map display                                          │
+│   • Turn stats (distances, duration)                                         │
+│   • Story completion info (if ended)                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Step 1: Player Agent Calls (Parallel)
+## Concurrent Actions - Detailed View
 
-Each player character has their own agent that decides their action. All player agents are called **simultaneously** using `Promise.all()`.
+The two-phase system enables realistic communication where characters can coordinate before acting:
 
-**Role:** `player-{character-name}` (e.g., `player-sarah`, `player-mike`)
-
-**System Prompt:**
 ```
-You are playing a character in an interactive story. Stay in character and
-make decisions that fit your personality and goals.
-```
-
-**User Prompt (example for Sarah):**
-```
-You are Sarah.
-
-CURRENT TIME: Day 1, 14:30
-
-YOUR CHARACTER:
-- Appearance: female, mid-30s, olive skin, average, athletic, medium dark brown hair, brown eyes
-- Clothing: torn business casual - white blouse, gray slacks, sensible flats
-- Personality: Calm under pressure, analytical, compassionate
-- Goals: Keep everyone alive, find water and medical supplies
-- Inventory: pen, small notebook
-- Status: minor cuts and bruises
-- Stats: Health: 85%, Stamina: 70%, Hunger: 20%, Thirst: 35%, Strength: 45%,
-         Dexterity: 55%, Encumbrance: 5%, Sanity: 90%, Anger: 10%, Fear: 25%
-
-Consider your physical and mental condition when deciding actions...
-
-CURRENT SITUATION:
-Location: Plane Crash Site
-The scattered wreckage of a small passenger plane lies across the dunes...
-
-Available exits: north, east, south, west
-Items here: twisted metal, luggage, first aid kit
-Others present: Mike
-
-RECENT EVENTS:
-- The plane crashed in the desert
-- Sarah and Mike are the only survivors
-
-WORLD SUMMARY: Two survivors of a plane crash must find water and shelter...
-
-What do you do? Choose ONE action that fits your character.
-
-Respond with JSON:
-{
-  "thinking": "Brief internal thought about the situation",
-  "action": "The specific action you take",
-  "dialogue": "What you say, if anything"
-}
+                    Time ──────────────────────────────────────────►
+                         │
+   PHASE 1: THINK & TALK │        PHASE 2: ACTION
+   (all parallel)        │        (all parallel)
+                         │
+   ┌─────────────────────┼─────────────────────────┐
+   │                     │                         │
+   │  Sarah ─────────────┼─► "Let's check north"   │
+   │    │                │         │               │
+   │    │ thinking...    │         │ hears Mike    │
+   │    │ planning...    │         │               │
+   │    ▼                │         ▼               │
+   │  SPEAK              │      DECIDE ACTION      │──► "Head north"
+   │                     │         │               │
+   ├─────────────────────┼─────────┼───────────────┤
+   │                     │         │               │
+   │  Mike ──────────────┼─► "I'll search wreck"  │
+   │    │                │         │               │
+   │    │ thinking...    │         │ hears Sarah   │
+   │    │ planning...    │         │               │
+   │    ▼                │         ▼               │
+   │  SPEAK              │      DECIDE ACTION      │──► "Stay and search"
+   │                     │         │               │
+   ├─────────────────────┼─────────┼───────────────┤
+   │                     │         │               │
+   │  NPC (far away) ────┼─► [silent]             │
+   │    │                │         │               │
+   │    │ thinking...    │         │ hears nothing │
+   │    │ (alone)        │         │               │
+   │    ▼                │         ▼               │
+   │  [no speech]        │      DECIDE ACTION      │──► "Hunt for prey"
+   │                     │                         │
+   └─────────────────────┼─────────────────────────┘
+                         │
+                   COLLECT ──► TO DM RESOLUTION
 ```
 
-**Response (example):**
-```json
-{
-  "thinking": "We need to assess injuries first, then find water before the heat gets worse.",
-  "action": "Sarah moves to the wreckage and searches for the first aid kit she spotted, carefully navigating around the sharp metal debris.",
-  "dialogue": "Mike, are you hurt? Let me check you over while I grab that first aid kit."
-}
+### Communication Range
+
+Characters can only hear others within 20 meters:
+
 ```
-
----
-
-### Step 2: DM Resolution Call
-
-After all player agents have decided their actions, the DM agent resolves what happens.
-
-**Role:** `dm-resolve`
-
-**User Prompt (example):**
-```
-Resolve the following character actions and describe what happens.
-
-CURRENT TIME: Day 1, 14:30
-ENVIRONMENT: desert, sandy dunes, bright harsh sunlight, clear, hot
-
-STORY GOAL: Survive the desert and find rescue
-NARRATIVE ARC: Introduction - characters assess their dire situation
-MAJOR EVENTS SO FAR: Plane crashed in remote desert
-CURRENT TENSIONS: No water supply; Extreme heat; Unknown location
-
-CURRENT LOCATION: Plane Crash Site
-The scattered wreckage of a small passenger plane lies across the dunes...
-Items: twisted metal, luggage, first aid kit
-Exits: north, east, south, west
-
-CHARACTERS:
-- Sarah (char_sarah): female, mid-30s, olive skin, athletic, wearing torn business casual,
-  minor cuts and bruises, inventory: [pen, small notebook]
-  Stats: HP:85% STM:70% HNG:20% THR:35% STR:45% DEX:55% ENC:5% SAN:90% ANG:10% FER:25%
-- Mike (char_mike): male, late-30s, tan skin, muscular, wearing khaki cargo pants and
-  a torn polo shirt, healthy, inventory: [pocket knife, wallet]
-  Stats: HP:90% STM:75% HNG:15% THR:30% STR:65% DEX:50% ENC:10% SAN:85% ANG:15% FER:20%
-
-CHARACTER ACTIONS THIS TURN:
-Sarah: Sarah moves to the wreckage and searches for the first aid kit. Says: "Mike, are you hurt?"
-Mike: Mike examines the plane's fuselage, looking for intact storage compartments. Says: "I'm fine, just a few scratches."
-
-Resolve these actions realistically. Consider:
-- What succeeds, fails, or has unexpected outcomes based on CHARACTER STATS
-- High strength = better physical tasks, high dexterity = better fine motor/agility tasks
-- Low sanity (<50%) = character may hallucinate or make irrational decisions
-- High anger (>50%) = character may act aggressively
-- High fear (>70%) = character may freeze or flee
-...
-
-Respond with JSON:
-{
-  "narrative": "Paragraph describing what happens (3-5 sentences)",
-  "sceneDescription": "Visual description for illustration",
-  "time": { "day": 1, "hour": 14, "minute": 45 },
-  "arcUpdates": { ... },
-  "worldChanges": { ... },
-  "worldSummary": "Updated summary"
-}
-```
-
-**Response (example):**
-```json
-{
-  "narrative": "Sarah carefully picked her way through the twisted metal, her medical instincts guiding her movements. She located the first aid kit wedged beneath a collapsed overhead bin, its white case scratched but intact. Meanwhile, Mike's engineering eye spotted a partially intact storage compartment near the tail section. Prying it open with his pocket knife, he discovered two bottles of water and a bag of peanuts - a small but crucial find. The afternoon sun continued its relentless assault, and both survivors could feel their energy draining with each passing minute.",
-  "sceneDescription": "A woman in torn business clothes retrieves a first aid kit from plane wreckage while a man in khakis pries open a storage compartment, harsh desert sun beating down",
-  "time": {
-    "day": 1,
-    "hour": 14,
-    "minute": 50
-  },
-  "arcUpdates": {
-    "narrativeArc": "Rising action - survivors gather resources",
-    "newMajorEvents": ["Found first aid kit", "Discovered water bottles"],
-    "tensions": ["Limited water supply", "Extreme heat", "Unknown location", "Need shelter before nightfall"]
-  },
-  "worldChanges": {
-    "locationUpdates": {
-      "items": ["twisted metal", "luggage"],
-      "description": null
-    },
-    "characterUpdates": [
-      {
-        "id": "char_sarah",
-        "inventoryAdd": ["first aid kit"],
-        "inventoryRemove": [],
-        "statusChange": null,
-        "clothingChange": null
-      },
-      {
-        "id": "char_mike",
-        "inventoryAdd": ["water bottle", "water bottle", "bag of peanuts"],
-        "inventoryRemove": [],
-        "statusChange": null,
-        "clothingChange": null
-      }
-    ]
-  },
-  "worldSummary": "Sarah and Mike have salvaged a first aid kit and precious water from the wreckage. They must now find shelter before the desert night."
-}
+        (0,0)                                    (100,0)
+          │                                         │
+     ┌────┼────┐        20m range              ┌────┼────┐
+     │  Sarah  │◄──────────────────────────────┤   NPC   │
+     │ (2, 3)  │        [TOO FAR - 98m]        │(100,50) │
+     └────┬────┘                               └─────────┘
+          │
+          │ 8m (can communicate)
+          │
+     ┌────▼────┐
+     │  Mike   │
+     │ (5, 10) │
+     └─────────┘
 ```
 
 ---
 
-### Step 3: Verification Agent Call
+## Information Flow - What Characters Know
 
-After the DM resolves actions, a verification agent updates character stats based on the narrative and elapsed time.
+Each turn, characters receive specific information:
 
-**Role:** `verify-state`
-
-**User Prompt (example):**
 ```
-Based on this narrative and elapsed time, update character states and stats.
-
-NARRATIVE:
-Sarah carefully picked her way through the twisted metal... The afternoon sun
-continued its relentless assault, and both survivors could feel their energy
-draining with each passing minute.
-
-ELAPSED TIME: 20 minutes
-
-CURRENT CHARACTER STATES:
-- Sarah (id: char_sarah): clothing="torn business casual", status="minor cuts and bruises",
-  inventory=[pen, small notebook, first aid kit]
-  Stats: health=85%, stamina=70%, hunger=20%, thirst=35%, strength=45%, dexterity=55%,
-         encumbrance=5%, sanity=90%, anger=10%, fear=25%
-- Mike (id: char_mike): clothing="khaki cargo pants and torn polo shirt", status="healthy",
-  inventory=[pocket knife, wallet, water bottle, water bottle, bag of peanuts]
-  Stats: health=90%, stamina=75%, hunger=15%, thirst=30%, strength=65%, dexterity=50%,
-         encumbrance=10%, sanity=85%, anger=15%, fear=20%
-
-Update clothing, status, inventory, AND STATS for each character based on what happened.
-
-STAT GUIDELINES (all values 0-100):
-- health: Decrease for injuries, increase slowly with rest/medical care
-- stamina: Decrease with physical exertion, recover with rest
-- hunger: Increase ~2-5% per hour of activity, decrease when eating
-- thirst: Increase ~3-8% per hour (faster in heat), decrease when drinking
-- encumbrance: Based on inventory weight
-- sanity: Decrease from trauma, horror, isolation; recover with safety
-- anger: Increase from frustration, conflict; decrease with time
-- fear: Increase from danger, threats; decrease with safety
-
-Respond with JSON only:
-{
-  "characterUpdates": [
-    {
-      "id": "character_id",
-      "clothingChange": "...",
-      "statusChange": "...",
-      "inventoryAdd": [],
-      "inventoryRemove": [],
-      "statsChange": {
-        "health": 85,
-        "stamina": 65,
-        "hunger": 22,
-        "thirst": 40,
-        ...
-      }
-    }
-  ]
-}
-```
-
-**Response (example):**
-```json
-{
-  "characterUpdates": [
-    {
-      "id": "char_sarah",
-      "clothingChange": null,
-      "statusChange": null,
-      "inventoryAdd": [],
-      "inventoryRemove": [],
-      "statsChange": {
-        "health": 85,
-        "stamina": 62,
-        "hunger": 23,
-        "thirst": 42,
-        "strength": 45,
-        "dexterity": 55,
-        "encumbrance": 15,
-        "sanity": 88,
-        "anger": 8,
-        "fear": 22
-      }
-    },
-    {
-      "id": "char_mike",
-      "clothingChange": null,
-      "statusChange": null,
-      "inventoryAdd": [],
-      "inventoryRemove": [],
-      "statsChange": {
-        "health": 90,
-        "stamina": 68,
-        "hunger": 18,
-        "thirst": 38,
-        "strength": 65,
-        "dexterity": 50,
-        "encumbrance": 25,
-        "sanity": 84,
-        "anger": 12,
-        "fear": 18
-      }
-    }
-  ]
-}
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CHARACTER CONTEXT (per character)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  YOUR CHARACTER                                                              │
+│  ├── Appearance, clothing, personality, goals                                │
+│  ├── Inventory: [items you carry]                                            │
+│  ├── Status: "healthy" / "injured" / etc.                                    │
+│  ├── Stats: health, stamina, hunger, thirst, strength, dex, int, etc.        │
+│  ├── Position: (x, y) meters from center                                     │
+│  └── Attitudes toward others: love, anger, attraction, trust, fear           │
+│                                                                              │
+│  PERSONALITY EFFECTS (from personalityTypes)                                 │
+│  └── Behavioral guidance: "As a stoic, you rarely show emotion..."           │
+│                                                                              │
+│  STAT EFFECTS (if thresholds crossed)                                        │
+│  └── "WARNING: Stamina at 25% - you're exhausted, must rest soon"            │
+│                                                                              │
+│  ATTITUDE EFFECTS (if thresholds crossed)                                    │
+│  └── "Your attraction to Mike (75%) makes you seek his company..."           │
+│                                                                              │
+│  CURRENT SITUATION                                                           │
+│  ├── Location name and description                                           │
+│  ├── Items here, dead bodies, discovered objects (within visual range)       │
+│  ├── Others present (with distance: "right next to you" / "nearby" / etc.)   │
+│  └── Available exits                                                         │
+│                                                                              │
+│  KNOWN LOCATIONS (discovered map features)                                   │
+│  └── "Rocky Oasis (water_source): 2500m northeast (~31 min walk)"            │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │ RESULT OF YOUR LAST ACTION (NEW!)                                     │  │
+│  │ "You successfully found the water bottle. It's half full."            │  │
+│  │                                                                       │  │
+│  │ This explicit feedback tells you what happened when you tried         │  │
+│  │ your action last turn - success, failure, or partial outcome.         │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  LAST TURN, YOU OBSERVED NEARBY                                              │
+│  └── "Mike: searched the wreckage. Said: 'Found some supplies!'"             │
+│                                                                              │
+│  RECENT EVENTS (last 7 DM narratives)                                        │
+│  └── "Sarah and Mike continued through the desert as the sun rose..."        │
+│                                                                              │
+│  STORY CONTEXT                                                               │
+│  ├── Goal: "Survive and find rescue"                                         │
+│  ├── Major events: "Plane crashed", "Found water source"                     │
+│  └── Current tensions: "Low water supply", "Storm approaching"               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Step 4: Image Generation
+## DM Resolution Context
 
-The scene description from the DM response is sent to the image generation model.
+The DM receives comprehensive information to make decisions:
 
-**Model:** `Tongyi-MAI/Z-Image-Turbo` (local GPU via draw.py)
-
-**Prompt (example):**
 ```
-A woman in torn business clothes retrieves a first aid kit from plane wreckage
-while a man in khakis pries open a storage compartment, harsh desert sun beating down
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DM RESOLUTION CONTEXT                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  STORY STATE                                                                 │
+│  ├── Current time: Day 1, 14:30                                              │
+│  ├── Story goal and victory conditions                                       │
+│  ├── Narrative arc: "Rising action"                                          │
+│  ├── Major events so far                                                     │
+│  └── Current tensions                                                        │
+│                                                                              │
+│  ENVIRONMENT                                                                 │
+│  └── Type, terrain, lighting, weather, temperature                           │
+│                                                                              │
+│  ALL CHARACTERS (with full details)                                          │
+│  ├── Positions, stats, inventory, status, clothing                           │
+│  ├── Attitudes toward each other                                             │
+│  └── Sight distances                                                         │
+│                                                                              │
+│  TRAVEL SUMMARY                                                              │
+│  └── "Sarah: traveled 2500m total, currently 1800m from starting point"      │
+│                                                                              │
+│  KNOWN LOCATIONS (discovered features)                                       │
+│  └── With distances from each character and navigation instructions          │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │ ALL MAP FEATURES WITH DISTANCES                                       │  │
+│  │                                                                       │  │
+│  │ ⚠️ CRITICAL: Characters can only ARRIVE at locations within ~1200m   │  │
+│  │                                                                       │  │
+│  │ Sarah at (0, 2000):                                                   │  │
+│  │   - Rocky Oasis: 3500m northeast → ✗ 3 turns away - DO NOT arrive    │  │
+│  │   - Wind-Cut Caves: 800m west → ✓ CAN ARRIVE THIS TURN               │  │
+│  │                                                                       │  │
+│  │ This prevents the DM from writing that characters "arrived" at       │  │
+│  │ locations that are actually days of travel away.                     │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  CHARACTER DIALOGUE THIS TURN (from Phase 1)                                 │
+│  └── All speech to include in narrative                                      │
+│                                                                              │
+│  CHARACTER ACTIONS THIS TURN (from Phase 2)                                  │
+│  └── What each character is attempting to do                                 │
+│                                                                              │
+│  DM INSTRUCTIONS (if provided)                                               │
+│  └── "A sandstorm approaches from the west"                                  │
+│                                                                              │
+│  STAT THRESHOLDS (enforcement rules)                                         │
+│  └── "At stamina ≤10%: character can only rest or do light activities"       │
+│                                                                              │
+│  HYBRID STAT SYSTEM INSTRUCTIONS                                             │
+│  └── Activity levels and event categories to use instead of raw numbers      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
-
-**Output:** A generated image saved to `stories/{storyId}/images/turn_{N}.png`
 
 ---
 
-## Optional: DM Instructions
+## Hybrid Stat System
 
-The user can provide optional DM instructions that get incorporated into the turn. These appear before the DM resolution call.
+Stats are calculated deterministically by the system based on activity categories from the DM:
 
-**Example DM Instruction:** "A sandstorm approaches from the west"
-
-This gets added to the DM Resolution prompt:
 ```
-DM INSTRUCTIONS (incorporate these into the narrative):
-A sandstorm approaches from the west
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          ACTIVITY LEVELS                                     │
+├──────────────┬────────────┬─────────────┬─────────────┬─────────────────────┤
+│ Level        │ Stamina/hr │ Thirst Mult │ Hunger/hr   │ Examples            │
+├──────────────┼────────────┼─────────────┼─────────────┼─────────────────────┤
+│ rest         │ +20        │ ×0.5        │ 1           │ Sleeping, resting   │
+│ light        │ +5         │ ×0.8        │ 2           │ Sitting, vehicle    │
+│ moderate     │ -3         │ ×1.0        │ 3           │ Walking, searching  │
+│ strenuous    │ -12        │ ×1.5        │ 5           │ Running, climbing   │
+│ extreme      │ -25        │ ×2.0        │ 8           │ Sprinting, combat   │
+└──────────────┴────────────┴─────────────┴─────────────┴─────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          EVENT CATEGORIES                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  HYDRATION EVENTS                                                            │
+│  ├── drinking: thirst -= 30                                                  │
+│  └── dehydrating: thirst += 15 (on top of base rate)                         │
+│                                                                              │
+│  NUTRITION EVENTS                                                            │
+│  ├── eating: hunger -= 40                                                    │
+│  └── vomiting: hunger += 20, health -= 5                                     │
+│                                                                              │
+│  HEALTH EVENTS                                                               │
+│  ├── injured (minor): health -= 5                                            │
+│  ├── injured (moderate): health -= 15                                        │
+│  ├── injured (severe): health -= 30                                          │
+│  ├── healing: health += 5                                                    │
+│  └── resting: health += 2 (if injured)                                       │
+│                                                                              │
+│  MENTAL EVENTS                                                               │
+│  ├── stressed: sanity -= 3, fear += 5                                        │
+│  ├── relieved: sanity += 5, fear -= 10                                       │
+│  ├── terrified: sanity -= 8, fear += 25                                      │
+│  ├── enraged: anger += 30, sanity -= 5                                       │
+│  └── calm: anger -= 20, fear -= 15, sanity += 3                              │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The DM will then work this event into the narrative naturally.
+---
+
+## LLM Calls Per Turn
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          LLM CALLS SUMMARY                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   For a story with N living characters:                                      │
+│                                                                              │
+│   Phase 1: Think/Talk (parallel) ────────────────────────── N calls         │
+│   Phase 2: Action (parallel) ────────────────────────────── N calls         │
+│   DM Resolution ─────────────────────────────────────────── 1 call          │
+│   Verification ──────────────────────────────────────────── 1 call          │
+│   Image Generation ──────────────────────────────────────── 1 call (GPU)    │
+│                                                                              │
+│   ───────────────────────────────────────────────────────────────────────   │
+│   TOTAL: 2N + 3 LLM calls per turn                                          │
+│                                                                              │
+│   Example (2 characters): 2(2) + 3 = 7 calls                                 │
+│   Example (5 characters): 2(5) + 3 = 13 calls                                │
+│                                                                              │
+│   + Novel writer call (conditional, at day boundaries)                       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## File Storage Structure
+
+```
+stories/
+└── {storyId}/
+    ├── state.json              # Current world state (characters, location, etc.)
+    ├── narrative.json          # Story content, history, scene descriptions
+    ├── map.json                # Map features, character paths, distances
+    ├── story.md                # Human-readable story with embedded images
+    ├── novel.md                # Generated prose novel (if author style set)
+    ├── deterministic.log       # Log of all stat calculations for debugging
+    ├── history/                # Turn snapshots for rollback
+    │   ├── turn-000.json
+    │   ├── turn-001.json
+    │   └── ...
+    ├── images/                 # Generated illustrations
+    │   ├── turn-000.jpg
+    │   ├── turn-001.jpg
+    │   └── ...
+    └── logs/                   # LLM request/response logs
+        ├── 20260121_143052_dm-init_model.json
+        ├── 20260121_143055_player-sarah-think_model.json
+        ├── 20260121_143056_player-sarah-action_model.json
+        ├── 20260121_143058_dm-resolve_model.json
+        └── ...
+```
+
+---
+
+## Position and Movement
+
+Characters and objects have positions tracked in meters (x, y) relative to scene center.
+
+### Coordinate System
+
+```
+                    North (+y)
+                        │
+                        │
+                        │
+    West (-x) ──────────┼────────── East (+x)
+                        │
+                        │
+                        │
+                    South (-y)
+```
+
+### Movement Speeds
+
+| Activity | Speed | Per 15-min turn |
+|----------|-------|-----------------|
+| Walking | ~80 m/min (5 km/h) | ~1,200 m |
+| Running | ~150 m/min (9 km/h) | ~2,250 m |
+| Sprinting | ~200 m/min (12 km/h) | ~3,000 m |
+
+### Navigation Example
+
+```
+Character wants to reach "Rocky Oasis" at (5500, 3000)
+Current position: (0, 2000)
+
+Distance: sqrt((5500-0)² + (3000-2000)²) = 5590m
+Direction: atan2(1000, 5500) = 10.3° (roughly east-northeast)
+
+Turn 1: Move 1200m toward target → (1183, 2214)
+Turn 2: Move 1200m toward target → (2365, 2429)
+Turn 3: Move 1200m toward target → (3548, 2643)
+Turn 4: Move 1200m toward target → (4731, 2857)
+Turn 5: Move 859m (remaining) → (5500, 3000) ARRIVED!
+```
 
 ---
 
@@ -471,12 +756,13 @@ The DM will then work this event into the narrative naturally.
 
 | Stat | Range | Default | Description |
 |------|-------|---------|-------------|
-| health | 0-100% | 100 | Physical wellbeing, injuries decrease it |
+| health | 0-100% | 100 | Physical wellbeing (0 = death) |
 | stamina | 0-100% | 100 | Energy for physical activity |
 | hunger | 0-100% | 0 | 0=full, 100=starving |
 | thirst | 0-100% | 0 | 0=hydrated, 100=severely dehydrated |
-| strength | 0-100% | 50 | Physical power for tasks |
-| dexterity | 0-100% | 50 | Agility and fine motor skills |
+| strength | 0-100% | 50 | Physical power (ability stat) |
+| dexterity | 0-100% | 50 | Agility/fine motor (ability stat) |
+| intelligence | 0-100% | 50 | Mental acuity (ability stat) |
 | encumbrance | 0-100% | 0 | Inventory weight burden |
 | sanity | 0-100% | 100 | Mental stability |
 | anger | 0-100% | 0 | Frustration/aggression level |
@@ -484,287 +770,34 @@ The DM will then work this event into the narrative naturally.
 
 ---
 
-## File Storage
+## Attitude System
 
-Each story is saved in `stories/{storyId}/`:
+Characters track feelings toward each other:
 
-```
-stories/
-└── {storyId}/
-    ├── state.json          # Current world state
-    ├── story.md            # Full narrative markdown
-    ├── history/            # Turn snapshots for rollback
-    │   ├── turn_0.json
-    │   ├── turn_1.json
-    │   └── ...
-    ├── images/             # Generated illustrations
-    │   ├── turn_0.png
-    │   ├── turn_1.png
-    │   └── ...
-    └── logs/               # LLM request/response logs
-        ├── 20260119_143052_dm-init_llama-v3p1-8b.json
-        ├── 20260119_143055_player-sarah_llama-v3p1-8b.json
-        ├── 20260119_143055_player-mike_llama-v3p1-8b.json
-        ├── 20260119_143058_dm-resolve_llama-v3p1-8b.json
-        ├── 20260119_143101_verify-state_llama-v3p1-8b.json
-        ├── 20260119_143105_image_flux.json
-        └── ...
-```
+| Attitude | Range | Description |
+|----------|-------|-------------|
+| love | 0-100% | Emotional connection, care |
+| anger | 0-100% | Resentment, hostility |
+| attraction | 0-100% | Physical/romantic interest |
+| trust | 0-100% | Reliability, faith |
+| fear | 0-100% | Intimidation, threat |
+
+Attitudes affect behavior when thresholds are crossed (e.g., attraction > 70% influences romantic behavior).
 
 ---
 
-## Position Tracking
+## Story Ending Conditions
 
-Characters and objects have positions tracked in meters (x, y) relative to the scene center.
+The DM checks for endings each turn:
 
-### Position Updates
+| Type | Condition | Example |
+|------|-----------|---------|
+| **victory** | Victory conditions met | Reached radio tower and called rescue |
+| **defeat** | All characters dead | Last survivor succumbed to thirst |
+| **other** | Story reaches natural end | Characters decided to stay in wilderness |
 
-The DM can update character positions when they move:
-
-```json
-{
-  "characterUpdates": [
-    {
-      "id": "char_sarah",
-      "positionChange": { "x": 25, "y": -10 }
-    }
-  ]
-}
-```
-
-### Movement Guidelines
-
-- Walking speed: ~5 meters per minute
-- Running speed: ~15 meters per minute
-- Positions affect proximity communication and interactions
-
----
-
-## Proximity Communication (Two-Phase System)
-
-Characters can only communicate with others within a 20-meter range. Each turn has two phases to enable real-time conversation.
-
-### Phase 1: Think and Talk
-
-All players simultaneously:
-1. Consider the situation and what they heard last turn
-2. Decide what they want to do (intended action)
-3. Speak to nearby characters to coordinate or share information
-
-**Prompt to Sarah:**
-```
-This is the THINK AND TALK phase. Consider what you want to do this turn and
-communicate with nearby characters (within 20 meters) to coordinate or share
-information. They will hear what you say before deciding their actions.
-
-Respond with JSON:
-{
-  "thinking": "Your internal thoughts about the situation and what you're planning",
-  "intendedAction": "What you're planning to do this turn",
-  "speech": "What you say out loud to nearby characters"
-}
-```
-
-**Sarah's Response:**
-```json
-{
-  "thinking": "We need to find water soon. Mike might know where to look.",
-  "intendedAction": "Search the wreckage for water containers",
-  "speech": "Mike, I'm going to check the luggage for water bottles. Can you look in the overhead compartments?"
-}
-```
-
-### Phase 2: Action
-
-After all players have spoken, each player:
-1. Hears what nearby characters said in Phase 1
-2. Decides their final action (may change based on what they heard)
-3. Speaks while acting (optional)
-
-**Prompt to Mike (showing what he heard):**
-```
-YOU HEAR FROM NEARBY:
-- Sarah says: "Mike, I'm going to check the luggage for water bottles. Can you look in the overhead compartments?"
-
-This is the ACTION phase. You've heard what nearby characters said. Now decide your final action for this turn.
-```
-
-**Mike's Response:**
-```json
-{
-  "thinking": "Good idea - Sarah's checking luggage, I'll handle the compartments.",
-  "action": "Mike nods and moves to the intact section of the plane, reaching up to check the overhead compartments one by one.",
-  "dialogue": "On it! I'll let you know if I find anything."
-}
-```
-
-### Turn Flow with Communication
-
-```
-Phase 1: Think & Talk (parallel)
-├── Sarah thinks: "Need water" → speaks: "Check the luggage?"
-├── Mike thinks: "Assess damage" → speaks: "I'll check structural integrity"
-└── (all speech collected)
-
-Phase 2: Action (parallel, with speech from Phase 1)
-├── Sarah hears Mike → decides: search luggage
-├── Mike hears Sarah → decides: check compartments instead
-└── (final actions sent to DM)
-```
-
-### Distance Descriptions
-
-Players see other characters with distance indicators:
-
-- **right next to you** - within 5 meters
-- **nearby (can communicate)** - within 20 meters
-- **some distance away** - 20-50 meters (cannot communicate)
-- **far away** - beyond 50 meters
-
----
-
-## Death System
-
-When a character's health reaches 0%, they die and are removed from play.
-
-### Death Process
-
-1. After stats verification, the engine checks for health <= 0
-2. Dead characters are converted to "dead body of {name}" objects
-3. Their inventory remains on the body (can be looted)
-4. The player agent for that character is removed
-5. Death is recorded as a major event
-
-### Dead Body Object
-
-```json
-{
-  "id": "dead_body_char_mike",
-  "name": "dead body of Mike",
-  "description": "The lifeless body of Mike. Wearing khaki cargo pants and torn polo shirt.",
-  "position": { "x": 10, "y": -5 },
-  "inventory": ["pocket knife", "wallet", "water bottle"],
-  "originalCharacter": {
-    "id": "char_mike",
-    "name": "Mike",
-    "appearance": { ... }
-  }
-}
-```
-
-### DM Guidance
-
-The DM is instructed:
-
-```
-DEATH:
-- If a character's health reaches 0%, they DIE
-- Dead characters become objects ("dead body of [name]") and are removed from play
-- Their inventory remains on their body and can be looted
-```
-
-### Player Visibility
-
-Living players see dead bodies in their situation:
-
-```
-Items here: twisted metal, luggage
-Dead bodies: dead body of Mike
-Others present: Sarah (nearby)
-```
-
----
-
-## Updated Turn Flow Diagram
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Human clicks "Next Turn"                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  0. COLLECT PREVIOUS TURN DIALOGUE                           │
-│     - For each character, get dialogue from last turn        │
-│     - From nearby characters (within 20m range)              │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. PHASE 1: THINK AND TALK (parallel)                       │
-│     - Each character considers the situation                 │
-│     - Decides what they INTEND to do                         │
-│     - SPEAKS to nearby characters to coordinate              │
-│     - All speech is collected                                │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1.5. DISTRIBUTE SPEECH                                      │
-│     - Each character receives speech from nearby others      │
-│     - Only within 20m communication range                    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. PHASE 2: ACTION (parallel)                               │
-│     - Each character HEARS what nearby others said           │
-│     - Decides FINAL action (may change based on speech)      │
-│     - Runs simultaneously for all living characters          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2.5. RECORD ACTION DIALOGUE                                 │
-│     - Store each character's dialogue for next turn          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. DM AGENT - RESOLUTION                                    │
-│     - Receives all character actions + positions             │
-│     - Resolves what happens based on stats                   │
-│     - Updates positions for movement                         │
-│     - Generates narrative and world changes                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. VERIFICATION AGENT                                       │
-│     - Updates character stats based on narrative             │
-│     - Tracks hunger, thirst, stamina, mental state           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. DEATH PROCESSING                                         │
-│     - Check for characters with health <= 0                  │
-│     - Convert to dead body objects                           │
-│     - Remove player agents for dead characters               │
-│     - Record deaths as major events                          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. IMAGE GENERATOR                                          │
-│     - Creates illustration from scene description            │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  7. SAVE & UPDATE UI                                         │
-│     - Save turn snapshot for rollback                        │
-│     - Update story display                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### LLM Calls Per Turn
-
-Each turn now makes the following LLM calls:
-- **N × Think/Talk calls** (Phase 1, parallel) - one per living character
-- **N × Action calls** (Phase 2, parallel) - one per living character
-- **1 × DM Resolution call**
-- **1 × Verification call**
-- **1 × Image generation call**
-
-For a 2-character story: 2 + 2 + 1 + 1 + 1 = **7 LLM calls per turn**
+When a story ends:
+1. `storyComplete` is set to `true`
+2. `storyEnding` contains type and summary
+3. Final novel chapter is generated
+4. No more turns can be taken

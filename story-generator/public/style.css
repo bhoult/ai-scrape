@@ -293,23 +293,35 @@ header h1 {
   border-color: #e94560;
 }
 
-.world-size-row {
+.world-options-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 1rem;
   font-size: 12px;
   color: #888;
 }
 
-.world-size-row label {
+.world-options-row label {
   white-space: nowrap;
 }
 
-.world-size-row input[type="range"] {
-  flex: 1;
-  max-width: 150px;
+.world-options-row input[type="range"] {
+  width: 120px;
   height: 4px;
   accent-color: #e94560;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: #e94560;
+  cursor: pointer;
 }
 
 #world-size-value {
