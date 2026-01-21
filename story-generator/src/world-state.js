@@ -1,6 +1,61 @@
 // Proximity threshold in meters for communication
 const COMMUNICATION_RANGE = 20;
 
+// Direction to heading mapping (degrees, 0=north, clockwise)
+const DIRECTION_TO_HEADING = {
+  'north': 0,
+  'n': 0,
+  'northeast': 45,
+  'ne': 45,
+  'east': 90,
+  'e': 90,
+  'southeast': 135,
+  'se': 135,
+  'south': 180,
+  's': 180,
+  'southwest': 225,
+  'sw': 225,
+  'west': 270,
+  'w': 270,
+  'northwest': 315,
+  'nw': 315
+};
+
+// Convert direction and distance to delta x, y
+// Coordinate system: x+ = east, y+ = north
+function movementToDelta(movement) {
+  if (!movement || typeof movement.distance !== 'number') {
+    return { dx: 0, dy: 0 };
+  }
+
+  const distance = Math.max(0, movement.distance);
+  let heading;
+
+  if (typeof movement.direction === 'number') {
+    // Direction given as degrees
+    heading = movement.direction;
+  } else if (typeof movement.direction === 'string') {
+    // Direction given as cardinal/intercardinal
+    const normalized = movement.direction.toLowerCase().trim();
+    heading = DIRECTION_TO_HEADING[normalized];
+    if (heading === undefined) {
+      console.warn(`Unknown direction: ${movement.direction}, defaulting to north`);
+      heading = 0;
+    }
+  } else {
+    return { dx: 0, dy: 0 };
+  }
+
+  // Convert heading to radians (heading 0 = north = +y)
+  const radians = (heading * Math.PI) / 180;
+
+  // Calculate delta: sin for x (east), cos for y (north)
+  const dx = Math.round(distance * Math.sin(radians));
+  const dy = Math.round(distance * Math.cos(radians));
+
+  return { dx, dy };
+}
+
 export class WorldState {
   constructor() {
     this.turnNumber = 0;
@@ -141,8 +196,20 @@ export class WorldState {
               }
             }
           }
-          // Handle position updates
-          if (update.positionchange && typeof update.positionchange === 'object') {
+          // Handle movement updates (direction + distance -> new position)
+          if (update.movement && typeof update.movement === 'object') {
+            const currentPos = character.position || { x: 0, y: 0 };
+            const { dx, dy } = movementToDelta(update.movement);
+            character.position = {
+              x: currentPos.x + dx,
+              y: currentPos.y + dy
+            };
+            if (dx !== 0 || dy !== 0) {
+              console.log(`[Movement] ${character.name}: moved ${update.movement.direction} ${update.movement.distance}m -> (${character.position.x}, ${character.position.y})`);
+            }
+          }
+          // Legacy support: handle absolute position updates (positionchange)
+          else if (update.positionchange && typeof update.positionchange === 'object') {
             character.position = {
               x: typeof update.positionchange.x === 'number' ? update.positionchange.x : (character.position?.x || 0),
               y: typeof update.positionchange.y === 'number' ? update.positionchange.y : (character.position?.y || 0)

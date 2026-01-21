@@ -878,12 +878,15 @@ TIME TRACKING (CRITICAL):
 - Extended activities (long travel, complex tasks, rest): 1-4 hours
 - When hour reaches 24, increment day and reset hour to 0
 
-POSITION TRACKING:
+MOVEMENT TRACKING:
 - Characters have positions in meters (x, y) relative to scene center
-- Update positionChange when characters move significantly
-- Characters within 20 meters can communicate with each other
+- When characters move, specify movement with direction and distance
+- Directions: "north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest", or heading in degrees (0=north, 90=east, 180=south, 270=west)
+- Distance in meters based on activity and duration
 - Movement speed: walking ~80m/min (5km/h), running ~150m/min (9km/h)
 - In a 15-minute turn, characters can walk ~1200m or run ~2250m maximum
+- Characters within 20 meters can communicate with each other
+- The system calculates new positions from movement - you only provide direction and distance
 
 DEATH:
 - If a character's health reaches 0%, they DIE
@@ -934,11 +937,11 @@ IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES (e.g., "canteen"
 - Each discovered object has: id, name, description, position (x, y in meters), status
 - These help characters navigate and plan by showing known resources and landmarks
 
-POSITION AND MOVEMENT - CRITICAL RULES:
-- Character positions are in METERS. Walking speed is ~80m per minute, running ~150m per minute.
+MOVEMENT - CRITICAL RULES:
+- Walking speed is ~80m per minute, running ~150m per minute.
 - A typical turn (15-30 minutes) allows movement of 1-2km at most if traveling continuously.
-- positionChange values MUST reflect realistic travel distances based on what the character is doing.
-- The narrative MUST match position changes - if characters "reach" a location, their position MUST be updated to that location's coordinates.
+- movement values MUST reflect realistic travel distances based on what the character is doing.
+- The narrative MUST match movement - if characters "reach" a location, their movement direction/distance must get them there.
 - Characters can ONLY discover/reach features listed in VISIBLE MAP FEATURES below. If a feature is not listed, it is too far away to see or reach this turn.
 - DO NOT write narrative about finding/reaching locations that are not in VISIBLE MAP FEATURES.
 
@@ -946,14 +949,14 @@ MAP FEATURE DISCOVERY:
 - Characters can ONLY discover features that appear in VISIBLE MAP FEATURES (within visibility range)
 - If a character moves within 100m of a visible map feature, they discover it - describe it in detail
 - Include discovered feature IDs in the discoveredMapFeatures array in worldChanges
-- When discovering a feature, the character's positionChange MUST place them AT or NEAR that feature's coordinates
+- When discovering a feature, specify movement that gets the character to that feature
 - Discovered features should be described vividly when first encountered
 
 MANDATORY - characterUpdates MUST reflect ALL state changes:
 - clothingChange: REQUIRED if ANY clothing changes occur. Set to COMPLETE current outfit (e.g., "naked", "torn shirt and jeans", "shirtless in cargo pants"). DO NOT OMIT THIS.
 - statusChange: REQUIRED if status changes (injured, tired, wet, etc.)
 - inventoryAdd/inventoryRemove: REQUIRED if items are picked up or dropped
-- positionChange: REQUIRED if character moves significantly (x, y in meters)
+- movement: REQUIRED if character moves (direction and distance in meters). Direction can be cardinal ("north", "southeast") or degrees (0-360).
 - You MUST include a characterUpdates entry for EVERY character whose state changed this turn
 - If clothing is removed or destroyed, clothingChange MUST be set (e.g., "naked" or partial description)
 
@@ -966,12 +969,8 @@ Respond with JSON:
     "objectDescription": "A discovered object/landmark (used when sceneFocus='object'), NO character names",
     "phenomenonDescription": "Weather/wildlife/event (used when sceneFocus='phenomenon'), NO character names"
   },
-  "time": {
-    "day": 1,
-    "hour": 9,
-    "minute": 30,
-    "_comment": "NEW time after this turn's actions (must be later than current time above)"
-  },
+  "durationMinutes": 30,
+  "_durationComment": "Estimate how many minutes the actions in this turn took (e.g., 5 for quick action, 30 for searching, 60+ for travel)",
   "arcUpdates": {
     "narrativeArc": "Updated phase of the story (e.g., 'Rising action - characters face first major obstacle')",
     "newMajorEvents": ["Any significant events from this turn, or empty array if none"],
@@ -991,7 +990,7 @@ Respond with JSON:
         "inventoryRemove": [],
         "statusChange": "wet and cold",
         "clothingChange": "naked",
-        "positionChange": { "x": 150, "y": -80 }
+        "movement": { "direction": "northeast", "distance": 150 }
       },
       {
         "id": "<use exact character id from CHARACTERS section above>",
@@ -999,7 +998,7 @@ Respond with JSON:
         "inventoryRemove": ["shirt"],
         "statusChange": null,
         "clothingChange": "shirtless, wearing only cargo pants and boots",
-        "positionChange": { "x": 145, "y": -75 }
+        "movement": { "direction": 45, "distance": 150 }
       }
     ],
     "environmentUpdate": {

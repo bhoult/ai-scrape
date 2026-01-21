@@ -514,6 +514,32 @@ export class GameEngine {
     return `Day ${time.day}, ${hour}:${minute}`;
   }
 
+  // Convert time object to total minutes
+  timeToMinutes(time) {
+    if (!time) return 0;
+    return (time.day || 1) * 24 * 60 + (time.hour || 0) * 60 + (time.minute || 0);
+  }
+
+  // Convert total minutes back to time object
+  minutesToTime(totalMinutes) {
+    const day = Math.floor(totalMinutes / (24 * 60));
+    const remainingMinutes = totalMinutes % (24 * 60);
+    const hour = Math.floor(remainingMinutes / 60);
+    const minute = remainingMinutes % 60;
+    return { day: day || 1, hour, minute };
+  }
+
+  // Advance time by duration (deterministic, never goes backwards)
+  advanceTime(durationMinutes) {
+    const currentTime = this.worldState.time || { day: 1, hour: 8, minute: 0 };
+    const currentMinutes = this.timeToMinutes(currentTime);
+    const duration = Math.max(1, Math.round(durationMinutes || 15)); // Minimum 1 minute
+    const newMinutes = currentMinutes + duration;
+    const newTime = this.minutesToTime(newMinutes);
+    console.log(`[Time] Advanced ${duration} minutes: ${this.formatTime(currentTime)} -> ${this.formatTime(newTime)}`);
+    return newTime;
+  }
+
   // Process intimacy effects - reduce attraction by 1/3 after sex
   processIntimacyEffects(narrative) {
     if (!narrative) return;
@@ -1532,12 +1558,8 @@ Respond with ONLY a JSON object:
       }
     }
 
-    // Calculate elapsed time for stat updates
-    const oldTime = stateSnapshot.time || { day: 1, hour: 8, minute: 0 };
-    const newTime = resolution.time || oldTime;
-    const oldMinutes = (oldTime.day * 24 * 60) + (oldTime.hour * 60) + oldTime.minute;
-    const newMinutes = (newTime.day * 24 * 60) + (newTime.hour * 60) + newTime.minute;
-    const elapsedMinutes = Math.max(0, newMinutes - oldMinutes);
+    // Use DM-estimated duration for stat updates
+    const elapsedMinutes = Math.max(1, Math.round(resolution.durationMinutes || 15));
 
     // Verify and update character states based on narrative
     const verifiedUpdates = await this.verifyCharacterStates(resolution.narrative, stateSnapshot.characters, elapsedMinutes, currentTurn);
@@ -1585,7 +1607,10 @@ Respond with ONLY a JSON object:
       console.log(`[Story Ending] Type: ${storyEnding.type} - ${storyEnding.summary}`);
     }
 
-    this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, resolution.time, resolution.arcUpdates);
+    // Calculate new time by adding duration to current time (deterministic)
+    const newTime = this.advanceTime(resolution.durationMinutes);
+
+    this.worldState.advanceTurn(resolution.narrative, resolution.worldSummary, newTime, resolution.arcUpdates);
 
     // Record DM instructions as a major event
     if (dmInstructions) {
@@ -1595,7 +1620,7 @@ Respond with ONLY a JSON object:
     this.llmLog.push(...turnLogs);
 
     // Append turn to story
-    const timeStr = this.formatTime(resolution.time);
+    const timeStr = this.formatTime(newTime);
     this.storyContent.push(`## Turn ${this.worldState.turnNumber}${timeStr ? ` - ${timeStr}` : ''}`);
     this.storyContent.push(resolution.narrative);
 
@@ -1615,7 +1640,7 @@ Respond with ONLY a JSON object:
     this.dayEvents.push(resolution.narrative);
 
     // Check if day changed or 40 turns passed - generate novel chapter
-    const newDay = resolution.time?.day || this.worldState.time?.day || 1;
+    const newDay = this.worldState.time?.day || 1;
     const turnsSinceLastNovel = this.worldState.turnNumber - this.lastNovelTurn;
 
     // If story is ending, prioritize the final chapter over day/40-turn chapters

@@ -78,7 +78,7 @@ export class DMAgent {
       sceneVisuals: parsed.scenevisuals || {},
       worldChanges: parsed.worldchanges || {},
       worldSummary: parsed.worldsummary || '',
-      time: parsed.time || worldState.time || { day: 1, hour: 8, minute: 0 },
+      durationMinutes: parsed.durationminutes || 15,
       arcUpdates: parsed.arcupdates || {},
       llmLog: log
     };
