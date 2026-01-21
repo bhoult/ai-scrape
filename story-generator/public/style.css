@@ -1637,6 +1637,57 @@ h2 {
   overflow-y: auto;
 }
 
+.json-viewer {
+  background: #0a2540;
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  max-height: 400px;
+  overflow: auto;
+}
+
+/* renderjson styling */
+.json-viewer .renderjson a {
+  text-decoration: none;
+}
+
+.json-viewer .renderjson .disclosure {
+  color: #888;
+  font-size: 10px;
+  padding-right: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.json-viewer .renderjson .syntax {
+  color: #888;
+}
+
+.json-viewer .renderjson .string {
+  color: #98c379;
+}
+
+.json-viewer .renderjson .number {
+  color: #d19a66;
+}
+
+.json-viewer .renderjson .boolean {
+  color: #56b6c2;
+}
+
+.json-viewer .renderjson .key {
+  color: #e06c75;
+}
+
+.json-viewer .renderjson .keyword {
+  color: #c678dd;
+}
+
+.json-viewer .renderjson .object.syntax {
+  color: #888;
+}
+
 .header-buttons {
   display: flex;
   gap: 0.5rem;

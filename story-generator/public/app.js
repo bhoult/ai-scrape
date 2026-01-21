@@ -1784,6 +1784,11 @@ async function showFullLog(filename) {
     const response = await fetch(`/api/game/logs/${filename}`);
     const log = await response.json();
 
+    // Configure renderjson for collapsible display
+    renderjson.set_show_to_level(1);
+    renderjson.set_icons('+', '-');
+    renderjson.set_sort_objects(false);
+
     // Create a modal to show full log
     const modal = document.createElement('div');
     modal.className = 'log-detail-modal';
@@ -1800,22 +1805,39 @@ async function showFullLog(filename) {
           </div>
           <div class="log-section">
             <div class="log-section-title">Request</div>
-            <pre>${JSON.stringify(log.request?.messages || log.request, null, 2)}</pre>
+            <div class="json-viewer" id="request-json"></div>
           </div>
           <div class="log-section">
             <div class="log-section-title">Response</div>
-            <pre>${JSON.stringify(log.response?.choices?.[0]?.message?.content || log.response, null, 2)}</pre>
+            <div class="json-viewer" id="response-json"></div>
           </div>
         </div>
       </div>
     `;
 
+    document.body.appendChild(modal);
+
+    // Render JSON with collapsible tree view
+    const requestData = log.request?.messages || log.request;
+    const responseData = log.response?.choices?.[0]?.message?.content || log.response;
+
+    // Parse response content if it's a JSON string
+    let parsedResponse = responseData;
+    if (typeof responseData === 'string') {
+      try {
+        parsedResponse = JSON.parse(responseData);
+      } catch (e) {
+        // Keep as string if not valid JSON
+      }
+    }
+
+    modal.querySelector('#request-json').appendChild(renderjson(requestData));
+    modal.querySelector('#response-json').appendChild(renderjson(parsedResponse));
+
     modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.remove();
     });
-
-    document.body.appendChild(modal);
   } catch (error) {
     console.error('Error loading log details:', error);
     alert('Error loading log details: ' + error.message);
