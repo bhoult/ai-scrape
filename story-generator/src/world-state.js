@@ -200,15 +200,64 @@ export class WorldState {
             }
           }
           // Handle movement updates (direction + distance -> new position)
+          // Supports: { direction, distance } OR { targetLocation: "feature_id_or_name" }
           if (update.movement && typeof update.movement === 'object') {
             const currentPos = character.position || { x: 0, y: 0 };
-            const { dx, dy } = movementToDelta(update.movement);
-            character.position = {
-              x: currentPos.x + dx,
-              y: currentPos.y + dy
-            };
+            let dx = 0, dy = 0;
+            let movementLog = '';
+
+            // Check for targetLocation - system calculates direction/distance automatically
+            if (update.movement.targetlocation || update.movement.targetLocation) {
+              const targetId = update.movement.targetlocation || update.movement.targetLocation;
+              const targetFeature = this.findFeatureByIdOrName(targetId);
+
+              if (targetFeature && targetFeature.position) {
+                // Calculate direction and distance to target
+                const targetX = targetFeature.position.x;
+                const targetY = targetFeature.position.y;
+                const totalDx = targetX - currentPos.x;
+                const totalDy = targetY - currentPos.y;
+                const totalDistance = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+
+                // Cap movement at realistic turn distance (default ~1200m for 15min walk)
+                const maxDistance = update.movement.maxDistance || 1200;
+                const moveDistance = Math.min(totalDistance, maxDistance);
+
+                if (totalDistance > 0) {
+                  // Normalize direction and apply move distance
+                  dx = Math.round((totalDx / totalDistance) * moveDistance);
+                  dy = Math.round((totalDy / totalDistance) * moveDistance);
+
+                  // If we're close enough, snap to target
+                  if (totalDistance <= maxDistance) {
+                    dx = Math.round(totalDx);
+                    dy = Math.round(totalDy);
+                    movementLog = `[Movement] ${character.name}: arrived at ${targetFeature.name} (${targetX}, ${targetY})`;
+                  } else {
+                    const remaining = Math.round(totalDistance - moveDistance);
+                    movementLog = `[Movement] ${character.name}: moved ${moveDistance}m toward ${targetFeature.name}, ${remaining}m remaining`;
+                  }
+                }
+              } else {
+                console.warn(`[Movement] Target location not found: ${targetId}`);
+              }
+            } else {
+              // Traditional direction + distance movement
+              const delta = movementToDelta(update.movement);
+              dx = delta.dx;
+              dy = delta.dy;
+              if (dx !== 0 || dy !== 0) {
+                movementLog = `[Movement] ${character.name}: moved ${update.movement.direction} ${update.movement.distance}m`;
+              }
+            }
+
+            // Apply movement
             if (dx !== 0 || dy !== 0) {
-              console.log(`[Movement] ${character.name}: moved ${update.movement.direction} ${update.movement.distance}m -> (${character.position.x}, ${character.position.y})`);
+              character.position = {
+                x: currentPos.x + dx,
+                y: currentPos.y + dy
+              };
+              console.log(`${movementLog} -> (${character.position.x}, ${character.position.y})`);
             }
           }
           // Legacy support: handle absolute position updates (positionchange)
@@ -469,6 +518,41 @@ export class WorldState {
     const dx = (pos1.x || 0) - (pos2.x || 0);
     const dy = (pos1.y || 0) - (pos2.y || 0);
     return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Find a map feature by ID or name (case-insensitive)
+  findFeatureByIdOrName(identifier) {
+    if (!identifier || !this.mapFeatures) return null;
+    const searchTerm = identifier.toLowerCase();
+
+    // First try exact ID match
+    let feature = this.mapFeatures.find(f => f.id === identifier);
+    if (feature) return feature;
+
+    // Then try case-insensitive ID match
+    feature = this.mapFeatures.find(f => f.id?.toLowerCase() === searchTerm);
+    if (feature) return feature;
+
+    // Then try case-insensitive name match
+    feature = this.mapFeatures.find(f => f.name?.toLowerCase() === searchTerm);
+    if (feature) return feature;
+
+    // Finally try partial name match
+    feature = this.mapFeatures.find(f => f.name?.toLowerCase().includes(searchTerm));
+    if (feature) return feature;
+
+    // Also check discovered objects
+    if (this.discoveredObjects) {
+      const obj = this.discoveredObjects.find(o =>
+        o.id === identifier ||
+        o.id?.toLowerCase() === searchTerm ||
+        o.name?.toLowerCase() === searchTerm ||
+        o.name?.toLowerCase().includes(searchTerm)
+      );
+      if (obj) return obj;
+    }
+
+    return null;
   }
 
   // Get map features visible from a given position

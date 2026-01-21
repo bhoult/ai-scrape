@@ -341,31 +341,37 @@ function buildAllFeaturesText(worldState) {
     return '';
   }
 
-  // Calculate average character position
   const chars = worldState.characters || [];
   if (chars.length === 0) return '';
 
-  let avgX = 0, avgY = 0;
+  const lines = [
+    'ALL MAP FEATURES WITH DISTANCES (use this to write realistic narrative):',
+    '⚠️ CRITICAL: Characters can only ARRIVE at locations within ~1200m (one turn of walking)',
+    '⚠️ If a location is farther, write about TRAVELING TOWARD it, not arriving!'
+  ];
+
+  // Show distances from each character to each feature
   for (const char of chars) {
-    avgX += (char.position?.x || 0);
-    avgY += (char.position?.y || 0);
-  }
-  avgX /= chars.length;
-  avgY /= chars.length;
+    const charPos = char.position || { x: 0, y: 0 };
+    lines.push(`\n  ${char.name} at (${charPos.x}, ${charPos.y}):`);
 
-  const features = worldState.mapFeatures.map(feature => {
-    const dx = avgX - feature.position.x;
-    const dy = avgY - feature.position.y;
-    const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
-    const direction = getDirection(dx, dy);
-    const timeToReach = Math.round(distance / 80); // minutes at walking pace
-    const discovered = feature.discovered ? ' [DISCOVERED]' : '';
-    return { name: feature.name, type: feature.type, distance, direction, timeToReach, discovered };
-  }).sort((a, b) => a.distance - b.distance);
+    const features = worldState.mapFeatures.map(feature => {
+      const dx = charPos.x - feature.position.x;
+      const dy = charPos.y - feature.position.y;
+      const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+      const direction = getDirection(dx, dy);
+      const turnsToArrive = Math.ceil(distance / 1200);
+      const discovered = feature.discovered ? ' [DISCOVERED]' : ' [NOT YET DISCOVERED]';
+      const reachable = distance <= 1200 ? '✓ CAN ARRIVE THIS TURN' : `✗ ${turnsToArrive} turns away - DO NOT write arrival`;
+      return { name: feature.name, type: feature.type, distance, direction, turnsToArrive, discovered, reachable, id: feature.id };
+    }).sort((a, b) => a.distance - b.distance);
 
-  const lines = ['ALL MAP FEATURES (for planning, NOT immediately reachable unless in VISIBLE section):'];
-  for (const f of features) {
-    lines.push(`  - ${f.name} (${f.type}): ${f.distance}m ${f.direction} (~${f.timeToReach} min walk)${f.discovered}`);
+    for (const f of features) {
+      lines.push(`    - ${f.name}: ${f.distance}m to the ${f.direction.toUpperCase()} → ${f.reachable}${f.discovered}`);
+      if (f.distance <= 1200) {
+        lines.push(`      → Use: movement: { "targetLocation": "${f.name}" }`);
+      }
+    }
   }
 
   return lines.join('\n');
@@ -464,7 +470,7 @@ function buildDiscoveredLocationsText(worldState, characterPaths) {
     return 'KNOWN LOCATIONS: None discovered yet.';
   }
 
-  const lines = ['KNOWN LOCATIONS (discovered features, objects, bodies):'];
+  const lines = ['KNOWN LOCATIONS - use targetLocation in movement to navigate here:'];
 
   for (const char of worldState.characters || []) {
     const charPos = char.position || { x: 0, y: 0 };
@@ -476,7 +482,9 @@ function buildDiscoveredLocationsText(worldState, characterPaths) {
       const distance = Math.round(Math.sqrt(dx * dx + dy * dy));
       const direction = getDirection(dx, dy);
       const walkTime = Math.round(distance / 80);
-      charLines.push(`    - ${loc.name} (${loc.type}): ${distance}m ${direction} (~${walkTime} min walk) at (${loc.position.x}, ${loc.position.y})`);
+      const turnsToArrive = Math.ceil(distance / 1200);
+      const arrivalNote = turnsToArrive <= 1 ? 'can arrive this turn' : `~${turnsToArrive} turns away`;
+      charLines.push(`    - "${loc.name}" [${loc.id || loc.type}]: ${distance}m ${direction} (${arrivalNote}) → use movement: { "targetLocation": "${loc.name}" }`);
     }
 
     lines.push(...charLines);
@@ -988,24 +996,25 @@ IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES in ENGLISH (e.g.
 - These help characters navigate and plan by showing known resources and landmarks
 
 MOVEMENT - CRITICAL RULES (READ CAREFULLY):
-- Walking speed is ~80m per minute, running ~150m per minute.
-- A typical turn (15-30 minutes) allows movement of 1-2km at most if traveling continuously.
+- Walking speed is ~80m per minute. Maximum movement per turn is ~1200m (15 min walk).
+- CHECK THE "ALL MAP FEATURES WITH DISTANCES" SECTION to see how far each location is!
 
-⚠️ NARRATIVE MUST MATCH MOVEMENT - THIS IS CRITICAL:
-- If you write that characters "reach" or "arrive at" a location, you MUST provide movement that actually gets them there.
-- Check the KNOWN LOCATIONS section above for each character's distance and direction to discovered locations.
-- Example: If Research Station is "2500m northeast" from Sarah, she needs movement: { "direction": "northeast", "distance": 2500 } to reach it.
-- DO NOT write "they reached the station" unless the movement values will actually place them at/near the station coordinates.
-- If the location is too far to reach in one turn, write narrative about traveling TOWARD it, not arriving at it.
+⚠️ BEFORE WRITING NARRATIVE ABOUT A LOCATION:
+1. Find the location in "ALL MAP FEATURES WITH DISTANCES" section
+2. Check if it says "✓ CAN ARRIVE THIS TURN" (within 1200m)
+3. If it says "✗ X turns away", you CANNOT write about arriving there - only traveling toward it
 
-TO NAVIGATE TO A DISCOVERED LOCATION:
-1. Find the location in KNOWN LOCATIONS with distance and direction from the character
-2. Set movement direction to match (e.g., if location is "northeast", use "northeast" or 45 degrees)
-3. Set movement distance to match (e.g., if 2500m away and you want them to arrive, distance: 2500)
-4. Only then write narrative about arriving/reaching the location
+EXAMPLE - If Mining Outpost shows "9000m northeast → ✗ 8 turns away":
+  ❌ WRONG: "They reached the mining outpost and began exploring"
+  ✓ CORRECT: "They continued trudging northeast, the distant outpost still hours away"
 
-- Characters can ONLY discover/reach features listed in VISIBLE MAP FEATURES below. If a feature is not listed, it is too far away to see or reach this turn.
-- DO NOT write narrative about finding/reaching locations that are not in VISIBLE MAP FEATURES.
+TO NAVIGATE TO A LOCATION (USE targetLocation):
+- movement: { "targetLocation": "Rock Overhang" } - system calculates correct direction automatically
+- The system moves character up to 1200m toward the target per turn
+- Use this instead of manual direction/distance to ensure accurate navigation
+
+- Characters can ONLY discover features within visibility range (shown in VISIBLE MAP FEATURES)
+- Characters can ONLY arrive at locations within ~1200m
 
 MAP FEATURE DISCOVERY:
 - Characters can ONLY discover features that appear in VISIBLE MAP FEATURES (within visibility range)
@@ -1054,7 +1063,8 @@ Respond with JSON:
         "inventoryRemove": [],
         "statusChange": "wet and cold",
         "clothingChange": "naked",
-        "movement": { "direction": "northeast", "distance": 300 },
+        "movement": { "targetLocation": "Rock Overhang" },
+        "_movementAlt": "OR use { \"direction\": \"northeast\", \"distance\": 300 } for exploration without destination",
         "sightDistance": 2000
       },
       {

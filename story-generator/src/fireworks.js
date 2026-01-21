@@ -516,10 +516,15 @@ export async function queryLLMJSON(prompt, options = {}) {
 
   // Check for content refusal and retry with fallback model
   if (isContentRefusal(result.content) && originalModel !== FALLBACK_MODEL) {
+    // Extract refusal reason for clearer error message
+    const refusalPreview = result.content?.slice(0, 500) || 'Empty response';
+    const errorMsg = `Model refused to generate content. Retrying with ${FALLBACK_MODEL}.\n\nRefusal message:\n${refusalPreview}`;
+
     // Log the refusal before retrying
-    logModelError('Content Refusal', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, `Model refused to generate content. Retrying with ${FALLBACK_MODEL}.`, turn);
+    logModelError('Content Refusal', originalModel, result.request, result.content, { max_tokens: result.request?.max_tokens }, errorMsg, turn);
 
     console.log(`[LLM] Content refusal detected from ${originalModel || 'default'}, retrying with ${FALLBACK_MODEL}...`);
+    console.log(`[LLM] Refusal: ${refusalPreview.slice(0, 200)}...`);
     result = await queryLLM(prompt, { ...options, model: FALLBACK_MODEL, jsonMode: true });
 
     // Check truncation on retry
@@ -533,7 +538,8 @@ export async function queryLLMJSON(prompt, options = {}) {
 
     // Check if fallback also refused
     if (isContentRefusal(result.content)) {
-      const errorMsg = `Fallback model ${FALLBACK_MODEL} also refused to generate content.`;
+      const fallbackRefusalPreview = result.content?.slice(0, 500) || 'Empty response';
+      const errorMsg = `Fallback model ${FALLBACK_MODEL} also refused to generate content.\n\nRefusal message:\n${fallbackRefusalPreview}`;
       logModelError('Content Refusal (Fallback)', FALLBACK_MODEL, result.request, result.content, { max_tokens: result.request?.max_tokens }, errorMsg, turn);
       throw new Error(errorMsg);
     }
