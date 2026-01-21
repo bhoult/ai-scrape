@@ -24,8 +24,8 @@ export class DMAgent {
     this.model = model;
   }
 
-  async initializeWorld(seed, authorStyle = null, dmAuthorStyle = null) {
-    const prompt = dmInitPrompt(seed, authorStyle, dmAuthorStyle);
+  async initializeWorld(seed, authorStyle = null, dmAuthorStyle = null, worldSize = 1) {
+    const prompt = dmInitPrompt(seed, authorStyle, dmAuthorStyle, worldSize);
 
     const result = await queryLLMJSON(prompt, {
       systemPrompt: DM_SYSTEM_PROMPT,

@@ -152,6 +152,9 @@ export class WorldState {
     if (dmResponse.authorstyle) {
       this.authorStyle = dmResponse.authorstyle;
     }
+
+    // Auto-discover any features visible from starting positions
+    this.autoDiscoverFeatures();
   }
 
   applyChanges(changes) {
@@ -233,6 +236,11 @@ export class WorldState {
               }
             }
           }
+          // Handle sight distance updates
+          if (typeof update.sightdistance === 'number' && update.sightdistance > 0) {
+            character.sightDistance = update.sightdistance;
+            console.log(`[Sight] ${character.name}: sight distance = ${update.sightdistance}m`);
+          }
         }
       }
     }
@@ -254,19 +262,24 @@ export class WorldState {
     }
 
     if (changes.time && typeof changes.time === 'object') {
+      // Ensure this.time exists with defaults
+      if (!this.time) {
+        this.time = { day: 1, hour: 8, minute: 0 };
+      }
+
       // Validate time doesn't go backwards
       const newTime = changes.time;
-      const currentMinutes = (this.time.day * 24 * 60) + (this.time.hour * 60) + this.time.minute;
-      const newMinutes = (newTime.day * 24 * 60) + (newTime.hour * 60) + newTime.minute;
+      const currentMinutes = ((this.time.day ?? 1) * 24 * 60) + ((this.time.hour ?? 8) * 60) + (this.time.minute ?? 0);
+      const newMinutes = ((newTime.day ?? 1) * 24 * 60) + ((newTime.hour ?? 8) * 60) + (newTime.minute ?? 0);
 
       if (newMinutes > currentMinutes) {
         this.time = newTime;
       } else {
         // Time went backwards, advance by 15 minutes instead
         console.warn('Time went backwards, auto-advancing by 15 minutes');
-        let minute = this.time.minute + 15;
-        let hour = this.time.hour;
-        let day = this.time.day;
+        let minute = (this.time.minute ?? 0) + 15;
+        let hour = this.time.hour ?? 8;
+        let day = this.time.day ?? 1;
         if (minute >= 60) {
           minute -= 60;
           hour++;
@@ -357,10 +370,39 @@ export class WorldState {
       this.discoveredObjects = this.discoveredObjects.filter(o => !removeIds.has(o.id));
     }
 
-    // Handle discovered map features
+    // Handle discovered map features (explicit from DM)
     if (Array.isArray(changes.discoveredmapfeatures)) {
       for (const featureId of changes.discoveredmapfeatures) {
         this.discoverFeature(featureId, this.turnNumber);
+      }
+    }
+
+    // Auto-discover map features based on character positions and sight distance
+    this.autoDiscoverFeatures();
+  }
+
+  // Automatically discover map features when characters are close enough to see them
+  autoDiscoverFeatures() {
+    if (!this.mapFeatures || this.mapFeatures.length === 0) return;
+    if (!this.characters || this.characters.length === 0) return;
+
+    for (const feature of this.mapFeatures) {
+      if (feature.discovered) continue; // Already discovered
+      if (!feature.position) continue;
+
+      for (const character of this.characters) {
+        if (character.status === 'dead') continue;
+        const charPos = character.position || { x: 0, y: 0 };
+        const sightDistance = character.sightDistance || 2000;
+
+        const distance = this.getDistance(charPos, feature.position);
+
+        // Feature is discovered if character can see it (within sight distance AND feature's visible range)
+        const effectiveRange = Math.min(sightDistance, feature.visibleFrom || 1000);
+        if (distance <= effectiveRange) {
+          this.discoverFeature(feature.id, this.turnNumber);
+          break; // No need to check other characters for this feature
+        }
       }
     }
   }
@@ -395,7 +437,7 @@ export class WorldState {
 
   getStateSnapshot() {
     // Deep copy to prevent reference mutations affecting snapshots
-    // Note: mapFeatures is stored separately in map.json, not in state snapshots
+    // Note: mapFeatures is also stored in map.json for persistence
     return JSON.parse(JSON.stringify({
       turnNumber: this.turnNumber,
       summary: this.summary,
@@ -416,7 +458,8 @@ export class WorldState {
       storyEnding: this.storyEnding,
       authorStyle: this.authorStyle,
       dmAuthorStyle: this.dmAuthorStyle,
-      characterAuthorStyle: this.characterAuthorStyle
+      characterAuthorStyle: this.characterAuthorStyle,
+      mapFeatures: this.mapFeatures
     }));
   }
 
@@ -573,8 +616,11 @@ export class WorldState {
   }
 
   getTimeString() {
-    const hour = this.time.hour.toString().padStart(2, '0');
-    const minute = this.time.minute.toString().padStart(2, '0');
-    return `Day ${this.time.day}, ${hour}:${minute}`;
+    if (!this.time) {
+      return 'Unknown time';
+    }
+    const hour = (this.time.hour ?? 8).toString().padStart(2, '0');
+    const minute = (this.time.minute ?? 0).toString().padStart(2, '0');
+    return `Day ${this.time.day ?? 1}, ${hour}:${minute}`;
   }
 }

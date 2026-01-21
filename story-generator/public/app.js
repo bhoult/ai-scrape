@@ -36,6 +36,8 @@ const mapContainer = document.getElementById('map-container');
 const gameMap = document.getElementById('game-map');
 const storySection = document.getElementById('story-section');
 const storyResizeHandle = document.getElementById('story-resize-handle');
+const worldSizeInput = document.getElementById('world-size');
+const worldSizeValue = document.getElementById('world-size-value');
 
 let currentTurn = 0;
 let currentStoryId = null;
@@ -202,17 +204,59 @@ function formatNarrativeText(text) {
     .join('');
 }
 
-function renderNarrative(narrative, turn, characterActions = null, time = null, thinkTalk = null) {
+// Format turn stats for display
+function formatTurnStats(turnStats) {
+  if (!turnStats) return '';
+  const parts = [];
+
+  // Calculate average distances
+  const distances = turnStats.distances || {};
+  const totalDistances = turnStats.totalDistances || {};
+  const charIds = Object.keys(distances);
+
+  if (charIds.length > 0) {
+    const turnTotal = charIds.reduce((sum, id) => sum + (distances[id] || 0), 0);
+    const turnAvg = turnTotal / charIds.length;
+
+    const totalSum = charIds.reduce((sum, id) => sum + (totalDistances[id] || 0), 0);
+    const totalAvg = totalSum / charIds.length;
+
+    const formatDist = (d) => {
+      if (d >= 1000) return `${(d / 1000).toFixed(1)}km`;
+      return `${Math.round(d)}m`;
+    };
+
+    if (turnAvg > 0) parts.push(`${formatDist(turnAvg)} this turn`);
+    if (totalAvg > 0) parts.push(`${formatDist(totalAvg)} total`);
+  }
+
+  // Format duration
+  const mins = Math.round(turnStats.durationMinutes || 0);
+  if (mins > 0) {
+    if (mins >= 60) {
+      const hours = Math.floor(mins / 60);
+      const remainMins = mins % 60;
+      parts.push(remainMins > 0 ? `${hours}h ${remainMins}m elapsed` : `${hours}h elapsed`);
+    } else {
+      parts.push(`${mins}m elapsed`);
+    }
+  }
+
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+function renderNarrative(narrative, turn, characterActions = null, time = null, thinkTalk = null, turnStats = null) {
   const entry = document.createElement('div');
   entry.className = 'narrative-entry';
   entry.dataset.turn = turn;
 
   const timeStr = time ? ` - ${formatTime(time)}` : '';
+  const statsStr = formatTurnStats(turnStats);
   const turnMarker = document.createElement('div');
   turnMarker.className = 'turn-marker';
 
   if (turn > 0) {
-    turnMarker.innerHTML = `<span>Turn ${turn}${timeStr}</span>`;
+    turnMarker.innerHTML = `<span>Turn ${turn}${timeStr}${statsStr}</span>`;
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-turn-btn';
     deleteBtn.textContent = '✕';
@@ -748,6 +792,36 @@ function renderWorldState(state) {
 let mapBounds = { minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 };
 let baseViewWidth = 2000; // Store the base view width for marker scaling
 
+// Map tooltip management
+let mapTooltip = null;
+
+function showMapTooltip(e, name, description, discovered) {
+  if (!mapTooltip) {
+    mapTooltip = document.createElement('div');
+    mapTooltip.className = 'map-tooltip';
+    document.body.appendChild(mapTooltip);
+  }
+
+  const status = discovered ? '' : ' <span class="undiscovered-tag">[UNDISCOVERED]</span>';
+  mapTooltip.innerHTML = `<strong>${name}</strong>${status}<br><span class="tooltip-desc">${description || 'No description'}</span>`;
+  mapTooltip.classList.add('visible');
+  moveMapTooltip(e);
+}
+
+function moveMapTooltip(e) {
+  if (!mapTooltip) return;
+  const x = e.clientX + 15;
+  const y = e.clientY + 15;
+  mapTooltip.style.left = x + 'px';
+  mapTooltip.style.top = y + 'px';
+}
+
+function hideMapTooltip() {
+  if (mapTooltip) {
+    mapTooltip.classList.remove('visible');
+  }
+}
+
 // Render the SVG map with features, characters, and paths
 function renderMap(state) {
   if (!state) {
@@ -759,6 +833,7 @@ function renderMap(state) {
 
   const gridGroup = gameMap.querySelector('.map-grid');
   const pathsGroup = gameMap.querySelector('.map-paths');
+  const sightRangesGroup = gameMap.querySelector('.map-sight-ranges');
   const featuresGroup = gameMap.querySelector('.map-features');
   const objectsGroup = gameMap.querySelector('.map-objects');
   const charactersGroup = gameMap.querySelector('.map-characters');
@@ -892,6 +967,22 @@ function renderMap(state) {
     pathIndex++;
   }
 
+  // Render sight range circles for characters
+  sightRangesGroup.innerHTML = '';
+  if (state.characters && state.characters.length > 0) {
+    for (const char of state.characters) {
+      if (char.status === 'dead') continue; // Dead characters don't see
+      const pos = char.position || { x: 0, y: 0 };
+      const sightDistance = char.sightDistance || 2000; // Default 2000m
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', pos.x);
+      circle.setAttribute('cy', pos.y);
+      circle.setAttribute('r', sightDistance);
+      sightRangesGroup.appendChild(circle);
+    }
+  }
+
   // Collect all labeled items for clustering
   const labeledItems = [];
 
@@ -912,24 +1003,24 @@ function renderMap(state) {
       circle.style.strokeWidth = 20 * markerScale;
       g.appendChild(circle);
 
-      // Tooltip on hover
+      // Tooltip on hover using custom tooltip
       g.addEventListener('mouseenter', (e) => {
-        const desc = feature.discovered ? feature.description : 'Undiscovered';
-        g.setAttribute('title', `${feature.name}: ${desc}`);
+        showMapTooltip(e, feature.name, feature.description, feature.discovered);
       });
+      g.addEventListener('mouseleave', hideMapTooltip);
+      g.addEventListener('mousemove', moveMapTooltip);
 
       featuresGroup.appendChild(g);
 
-      // Collect for label clustering (only if discovered)
-      if (feature.discovered) {
-        labeledItems.push({
-          x: feature.position.x,
-          y: feature.position.y + 280 * markerScale,
-          label: feature.name || feature.id,
-          fontSize: 200,
-          type: 'feature'
-        });
-      }
+      // Collect for label clustering (show ALL features for debugging)
+      labeledItems.push({
+        x: feature.position.x,
+        y: feature.position.y + 280 * markerScale,
+        label: feature.name || feature.id,
+        fontSize: 200,
+        type: 'feature',
+        discovered: feature.discovered
+      });
     }
   }
 
@@ -951,9 +1042,11 @@ function renderMap(state) {
       circle.style.strokeWidth = 15 * markerScale;
       g.appendChild(circle);
 
-      g.addEventListener('mouseenter', () => {
-        g.setAttribute('title', body.name);
+      g.addEventListener('mouseenter', (e) => {
+        showMapTooltip(e, body.name, body.causeOfDeath || 'Deceased', true);
       });
+      g.addEventListener('mouseleave', hideMapTooltip);
+      g.addEventListener('mousemove', moveMapTooltip);
 
       objectsGroup.appendChild(g);
 
@@ -984,9 +1077,11 @@ function renderMap(state) {
       circle.style.strokeWidth = 15 * markerScale;
       g.appendChild(circle);
 
-      g.addEventListener('mouseenter', () => {
-        g.setAttribute('title', `${obj.name}: ${obj.description || 'No description'}`);
+      g.addEventListener('mouseenter', (e) => {
+        showMapTooltip(e, obj.name, obj.description || 'No description', true);
       });
+      g.addEventListener('mouseleave', hideMapTooltip);
+      g.addEventListener('mousemove', moveMapTooltip);
 
       objectsGroup.appendChild(g);
 
@@ -1017,6 +1112,15 @@ function renderMap(state) {
       circle.style.strokeWidth = 30 * markerScale;
       g.appendChild(circle);
 
+      // Character tooltip with stats summary
+      g.addEventListener('mouseenter', (e) => {
+        const stats = char.stats || {};
+        const desc = `Health: ${stats.health || 0}, Stamina: ${stats.stamina || 0}\nStatus: ${char.status || 'unknown'}`;
+        showMapTooltip(e, char.name, desc, true);
+      });
+      g.addEventListener('mouseleave', hideMapTooltip);
+      g.addEventListener('mousemove', moveMapTooltip);
+
       charactersGroup.appendChild(g);
 
       // Collect for label clustering
@@ -1032,6 +1136,9 @@ function renderMap(state) {
 
   // Cluster nearby labels and render combined text
   renderClusteredLabels(labeledItems, markerScale);
+
+  // Render landmarks list below the map
+  renderLandmarksList(state);
 }
 
 // Cluster nearby labels and render as combined text elements
@@ -1082,12 +1189,19 @@ function renderClusteredLabels(items, markerScale) {
     // Calculate cluster center (average position)
     let sumX = 0, sumY = 0, maxFontSize = 0;
     const labels = [];
+    let hasUndiscovered = false;
 
     for (const item of cluster) {
       sumX += item.x;
       sumY += item.y;
       maxFontSize = Math.max(maxFontSize, item.fontSize);
-      labels.push(item.label);
+      // Mark undiscovered features with asterisk
+      if (item.discovered === false) {
+        labels.push('*' + item.label);
+        hasUndiscovered = true;
+      } else {
+        labels.push(item.label);
+      }
     }
 
     const centerX = sumX / cluster.length;
@@ -1097,9 +1211,14 @@ function renderClusteredLabels(items, markerScale) {
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('x', centerX);
     text.setAttribute('y', centerY);
-    text.setAttribute('font-size', maxFontSize * markerScale);
+    // Use minimum markerScale of 1 for text so it never shrinks below initial size
+    const textScale = Math.max(1, markerScale);
+    text.setAttribute('font-size', maxFontSize * textScale);
     text.dataset.baseFontSize = maxFontSize; // Store for zoom updates
     text.classList.add('map-label');
+    if (hasUndiscovered) {
+      text.classList.add('has-undiscovered');
+    }
 
     // Join labels with comma, or show count if too many
     if (labels.length <= 3) {
@@ -1110,6 +1229,120 @@ function renderClusteredLabels(items, markerScale) {
 
     labelsGroup.appendChild(text);
   }
+}
+
+// Render landmarks list below the map
+function renderLandmarksList(state) {
+  const landmarksList = document.getElementById('landmarks-list');
+  const visibleList = document.getElementById('visible-landmarks');
+  const nearbyList = document.getElementById('nearby-landmarks');
+  const sightDistanceBadge = document.getElementById('avg-sight-distance');
+
+  if (!landmarksList || !visibleList || !nearbyList) return;
+
+  // Clear existing lists
+  visibleList.innerHTML = '';
+  nearbyList.innerHTML = '';
+
+  if (!state || !state.mapFeatures || state.mapFeatures.length === 0) {
+    landmarksList.classList.add('hidden');
+    return;
+  }
+
+  // Calculate average character position and sight distance
+  let avgX = 0, avgY = 0, charCount = 0;
+  let totalSightDistance = 0, livingCharCount = 0;
+  if (state.characters && state.characters.length > 0) {
+    for (const char of state.characters) {
+      if (char.position) {
+        avgX += char.position.x;
+        avgY += char.position.y;
+        charCount++;
+      }
+      if (char.status !== 'dead') {
+        totalSightDistance += char.sightDistance || 2000;
+        livingCharCount++;
+      }
+    }
+    if (charCount > 0) {
+      avgX /= charCount;
+      avgY /= charCount;
+    }
+  }
+  const avgSightDistance = livingCharCount > 0 ? totalSightDistance / livingCharCount : 1000;
+
+  // Helper to calculate distance
+  const getDistance = (pos) => {
+    if (!pos) return Infinity;
+    const dx = pos.x - avgX;
+    const dy = pos.y - avgY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // Helper to format distance
+  const formatDist = (d) => {
+    if (d >= 1000) return `${(d / 1000).toFixed(1)}km`;
+    return `${Math.round(d)}m`;
+  };
+
+  // Update sight distance badge
+  if (sightDistanceBadge) {
+    sightDistanceBadge.textContent = `(sight: ${formatDist(avgSightDistance)})`;
+  }
+
+  // Separate discovered and undiscovered features
+  const discovered = [];
+  const undiscovered = [];
+
+  for (const feature of state.mapFeatures) {
+    const dist = getDistance(feature.position);
+    const item = { ...feature, distance: dist };
+
+    if (feature.discovered) {
+      discovered.push(item);
+    } else {
+      undiscovered.push(item);
+    }
+  }
+
+  // Sort by distance
+  discovered.sort((a, b) => a.distance - b.distance);
+  undiscovered.sort((a, b) => a.distance - b.distance);
+
+  // Render discovered landmarks
+  if (discovered.length > 0) {
+    for (const feature of discovered) {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span class="landmark-name">${feature.name || feature.id}</span>
+        <span class="landmark-distance">${formatDist(feature.distance)}</span>
+      `;
+      li.title = feature.description || '';
+      visibleList.appendChild(li);
+    }
+  } else {
+    visibleList.innerHTML = '<li style="color: #666;">None discovered</li>';
+  }
+
+  // Render closest undiscovered landmarks (limit to 3)
+  const closestUndiscovered = undiscovered.slice(0, 3);
+  if (closestUndiscovered.length > 0) {
+    for (const feature of closestUndiscovered) {
+      const li = document.createElement('li');
+      // Show type hint instead of name for undiscovered
+      const typeHint = feature.type ? feature.type.replace(/_/g, ' ') : 'unknown';
+      li.innerHTML = `
+        <span class="landmark-name">${typeHint}</span>
+        <span class="landmark-distance">~${formatDist(feature.distance)}</span>
+      `;
+      li.title = `Something is ${formatDist(feature.distance)} away`;
+      nearbyList.appendChild(li);
+    }
+  } else {
+    nearbyList.innerHTML = '<li style="color: #666;">None nearby</li>';
+  }
+
+  landmarksList.classList.remove('hidden');
 }
 
 // Update scale indicator
@@ -1283,6 +1516,8 @@ function updateMarkerSizes(viewWidth) {
   });
 
   // Update clustered label font sizes
+  // Use minimum markerScale of 1 for text so it never shrinks below initial size
+  const textScale = Math.max(1, markerScale);
   gameMap.querySelectorAll('.map-labels text').forEach(text => {
     // Get original base font size from data attribute, or default to 160
     let baseFontSize = parseFloat(text.dataset.baseFontSize);
@@ -1290,7 +1525,7 @@ function updateMarkerSizes(viewWidth) {
       baseFontSize = 160;
       text.dataset.baseFontSize = baseFontSize;
     }
-    text.setAttribute('font-size', baseFontSize * markerScale);
+    text.setAttribute('font-size', baseFontSize * textScale);
   });
 }
 
@@ -1779,13 +2014,32 @@ async function fetchAndRenderLogs() {
   }
 }
 
+// Helper to format text blocks with actual newlines for display
+function formatTextForDisplay(data) {
+  if (typeof data === 'string') {
+    // Return string as-is, we'll handle display with CSS white-space
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map(formatTextForDisplay);
+  }
+  if (data && typeof data === 'object') {
+    const result = {};
+    for (const key of Object.keys(data)) {
+      result[key] = formatTextForDisplay(data[key]);
+    }
+    return result;
+  }
+  return data;
+}
+
 async function showFullLog(filename) {
   try {
     const response = await fetch(`/api/game/logs/${filename}`);
     const log = await response.json();
 
-    // Configure renderjson for collapsible display
-    renderjson.set_show_to_level(1);
+    // Configure renderjson for fully expanded display
+    renderjson.set_show_to_level(Infinity);
     renderjson.set_icons('+', '-');
     renderjson.set_sort_objects(false);
 
@@ -1831,8 +2085,34 @@ async function showFullLog(filename) {
       }
     }
 
-    modal.querySelector('#request-json').appendChild(renderjson(requestData));
-    modal.querySelector('#response-json').appendChild(renderjson(parsedResponse));
+    // Format data for display
+    const formattedRequest = formatTextForDisplay(requestData);
+    const formattedResponse = formatTextForDisplay(parsedResponse);
+
+    modal.querySelector('#request-json').appendChild(renderjson(formattedRequest));
+    modal.querySelector('#response-json').appendChild(renderjson(formattedResponse));
+
+    // Post-process to show newlines in string values
+    modal.querySelectorAll('.json-viewer').forEach(viewer => {
+      viewer.querySelectorAll('*').forEach(el => {
+        if (el.childNodes.length === 1 && el.childNodes[0].nodeType === Node.TEXT_NODE) {
+          const text = el.textContent;
+          // Check if this looks like a JSON string value (starts and ends with quotes)
+          if (text.startsWith('"') && text.endsWith('"') && text.includes('\\n')) {
+            // Replace escaped newlines with actual newlines, remove surrounding quotes
+            const unescaped = text.slice(1, -1)
+              .replace(/\\n/g, '\n')
+              .replace(/\\t/g, '\t')
+              .replace(/\\"/g, '"');
+            el.textContent = '';
+            const pre = document.createElement('pre');
+            pre.className = 'json-text-block';
+            pre.textContent = unescaped;
+            el.appendChild(pre);
+          }
+        }
+      });
+    });
 
     modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
     modal.addEventListener('click', (e) => {
@@ -1859,12 +2139,13 @@ async function startGame() {
   const authorStyle = authorStyleInput.value.trim() || null;
   const dmAuthorStyle = dmAuthorStyleInput.value.trim() || null;
   const characterAuthorStyle = characterAuthorStyleInput.value.trim() || null;
+  const worldSize = parseFloat(worldSizeInput.value) || 1;
 
   try {
     const response = await fetch('/api/game', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seed, models, authorStyle, dmAuthorStyle, characterAuthorStyle })
+      body: JSON.stringify({ seed, models, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize })
     });
 
     const data = await response.json();
@@ -1963,7 +2244,7 @@ async function advanceTurn() {
       currentTurn = data.turn;
       updateStatusLine(currentTurn, data.worldState.time);
 
-      renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time, data.thinkTalk);
+      renderNarrative(data.narrative, data.turn, data.characterActions, data.worldState.time, data.thinkTalk, data.turnStats);
       renderWorldState(data.worldState);
       renderCharacterDisplay(data.worldState.characters);
       characterPaths = data.characterPaths || characterPaths; // Update from server
@@ -1993,6 +2274,14 @@ cancelProgressBtn.addEventListener('click', () => {
   cancelTurnsRequested = true;
   cancelProgressBtn.textContent = 'Stopping...';
   cancelProgressBtn.disabled = true;
+});
+
+// World size slider updates display (base is ~12 x 12 miles at 1x)
+worldSizeInput.addEventListener('input', () => {
+  const value = parseFloat(worldSizeInput.value);
+  const dimension = Math.round(12 * value);
+  const areaSqMiles = Math.round(150 * value * value);
+  worldSizeValue.textContent = `~${dimension} x ${dimension} mi (${areaSqMiles} mi²)`;
 });
 
 startBtn.addEventListener('click', startGame);

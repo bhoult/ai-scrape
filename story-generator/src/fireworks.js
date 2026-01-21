@@ -328,12 +328,109 @@ function isContentRefusal(content) {
   return refusalPatterns.some(pattern => pattern.test(content));
 }
 
+// Try to repair space-key malformation where all keys are " " or empty
+// This extracts values in order and maps them to expected field names
+function tryRepairSpaceKeyJSON(content, expectedFields) {
+  if (!content || !expectedFields || expectedFields.length === 0) return null;
+
+  try {
+    // Extract JSON object
+    const jsonStart = content.indexOf('{');
+    const jsonEnd = content.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd <= jsonStart) return null;
+
+    const jsonStr = content.slice(jsonStart, jsonEnd + 1);
+
+    // Check if this looks like space-key malformation (multiple " " : patterns)
+    const spaceKeyCount = (jsonStr.match(/" " *:/g) || []).length;
+    if (spaceKeyCount < 2) return null; // Not space-key malformation
+
+    console.log(`[LLM] Detected space-key malformation (${spaceKeyCount} space keys), attempting repair...`);
+
+    // Extract values by finding all : followed by value patterns
+    // We need to extract values in order, handling strings, arrays, and objects
+    const values = [];
+    let pos = 0;
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+    let currentValue = '';
+    let collectingValue = false;
+    let valueStart = -1;
+
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"' && !escapeNext) {
+        inString = !inString;
+      }
+
+      if (!inString) {
+        // When we see a colon at depth 1, the next value is what we want
+        if (char === ':' && depth === 1 && !collectingValue) {
+          collectingValue = true;
+          valueStart = i + 1;
+          continue;
+        }
+
+        // When collecting and we hit a comma at depth 1, or closing brace (which will transition to depth 0), capture the value
+        const willCloseMainObject = char === '}' && depth === 1;
+        if (collectingValue && (willCloseMainObject || (depth === 1 && char === ','))) {
+          const valueStr = jsonStr.slice(valueStart, i).trim();
+          if (valueStr) {
+            try {
+              values.push(JSON.parse(valueStr));
+            } catch (e) {
+              // If it doesn't parse as JSON, treat as raw string
+              values.push(valueStr);
+            }
+          }
+          collectingValue = false;
+        }
+
+        if (char === '{' || char === '[') depth++;
+        if (char === '}' || char === ']') depth--;
+      }
+    }
+
+    if (values.length === 0) return null;
+
+    // Map values to expected fields in order
+    const result = {};
+    for (let i = 0; i < Math.min(values.length, expectedFields.length); i++) {
+      result[expectedFields[i]] = values[i];
+    }
+
+    console.log(`[LLM] Successfully repaired space-key JSON: mapped ${values.length} values to ${Object.keys(result).length} fields`);
+    return result;
+  } catch (e) {
+    console.log(`[LLM] Space-key repair failed: ${e.message}`);
+    return null;
+  }
+}
+
 // Try to repair common JSON malformations
-function tryRepairJSON(content) {
+function tryRepairJSON(content, expectedFields = null) {
   if (!content) return null;
 
   try {
-    // First, try to find a valid JSON object in the content
+    // First, check for space-key malformation if we have expected fields
+    if (expectedFields) {
+      const spaceKeyRepaired = tryRepairSpaceKeyJSON(content, expectedFields);
+      if (spaceKeyRepaired) return spaceKeyRepaired;
+    }
+
+    // Try to find a valid JSON object in the content
     const jsonStart = content.indexOf('{');
     const jsonEnd = content.lastIndexOf('}');
     if (jsonStart !== -1 && jsonEnd > jsonStart) {
@@ -405,6 +502,7 @@ function tryRepairJSON(content) {
 export async function queryLLMJSON(prompt, options = {}) {
   const originalModel = options.model;
   const turn = options.turn;
+  const expectedFields = options.expectedFields || null; // For repairing space-key malformation
   let result = await queryLLM(prompt, { ...options, jsonMode: true });
 
   // Check if response was truncated
@@ -451,7 +549,7 @@ export async function queryLLMJSON(prompt, options = {}) {
         result.parsed = JSON.parse(jsonMatch[1]);
       } catch (e2) {
         // Try repair on code block content
-        const repaired = tryRepairJSON(jsonMatch[1]);
+        const repaired = tryRepairJSON(jsonMatch[1], expectedFields);
         if (repaired) {
           result.parsed = repaired;
           console.log(`[LLM] Repaired malformed JSON from code block`);
@@ -463,7 +561,7 @@ export async function queryLLMJSON(prompt, options = {}) {
       }
     } else {
       // Try to repair malformed JSON
-      const repaired = tryRepairJSON(result.content);
+      const repaired = tryRepairJSON(result.content, expectedFields);
       if (repaired) {
         result.parsed = repaired;
         console.log(`[LLM] Repaired malformed JSON response`);
@@ -483,7 +581,7 @@ export async function queryLLMJSON(prompt, options = {}) {
             result.response = retryResult.response;
             console.log(`[LLM] Fallback model returned valid JSON`);
           } catch (retryError) {
-            const retryRepaired = tryRepairJSON(retryResult.content);
+            const retryRepaired = tryRepairJSON(retryResult.content, expectedFields);
             if (retryRepaired) {
               result.parsed = retryRepaired;
               result.content = retryResult.content;

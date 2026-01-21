@@ -176,7 +176,7 @@ app.post('/api/stories/:id/load', async (req, res) => {
 
 app.post('/api/game', async (req, res) => {
   try {
-    const { seed, models: roleModels, authorStyle, dmAuthorStyle, characterAuthorStyle } = req.body;
+    const { seed, models: roleModels, authorStyle, dmAuthorStyle, characterAuthorStyle, worldSize } = req.body;
     if (!seed) {
       return res.status(400).json({ error: 'Seed is required' });
     }
@@ -185,7 +185,7 @@ app.post('/api/game', async (req, res) => {
     // Use provided role models or fall back to default for all
     const models = roleModels || { dm: defaultModel, character: defaultModel, narrator: defaultModel };
     gameEngine = new GameEngine(models);
-    const result = await gameEngine.initializeFromSeed(seed, authorStyle || null, dmAuthorStyle || null, characterAuthorStyle || null);
+    const result = await gameEngine.initializeFromSeed(seed, authorStyle || null, dmAuthorStyle || null, characterAuthorStyle || null, worldSize || 1);
 
     res.json({
       success: true,
@@ -217,7 +217,9 @@ app.post('/api/game/turn', async (req, res) => {
       narrative: result.narrative,
       worldState: result.worldState,
       turnLogs: result.turnLogs,
-      characterPaths: result.characterPaths
+      characterPaths: result.characterPaths,
+      turnStats: result.turnStats,
+      thinkTalk: result.thinkTalk
     });
   } catch (error) {
     console.error('Error advancing turn:', error);

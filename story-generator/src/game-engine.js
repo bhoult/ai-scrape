@@ -73,6 +73,7 @@ export class GameEngine {
     this.dayEvents = []; // Events that happened during current day
     this.lastNovelTurn = 0; // Track when the last novel chapter was generated
     this.characterPaths = {}; // Track character position history for map display
+    this.totalDistanceTraveled = {}; // Track cumulative distance traveled by each character
   }
 
   setModels(models) {
@@ -109,9 +110,12 @@ export class GameEngine {
     this.saveStory();
   }
 
-  // Update character position history for map paths
+  // Update character position history for map paths and track distance traveled
+  // Returns distances traveled this turn for each character
   updateCharacterPaths() {
-    if (!this.worldState || !this.worldState.characters) return;
+    if (!this.worldState || !this.worldState.characters) return {};
+
+    const turnDistances = {};
 
     for (const char of this.worldState.characters) {
       if (!char.position) continue;
@@ -119,9 +123,20 @@ export class GameEngine {
       if (!this.characterPaths[char.id]) {
         this.characterPaths[char.id] = [];
       }
+      if (!this.totalDistanceTraveled[char.id]) {
+        this.totalDistanceTraveled[char.id] = 0;
+      }
 
       const positions = this.characterPaths[char.id];
       const lastPos = positions[positions.length - 1];
+
+      // Calculate distance traveled this turn
+      let distanceThisTurn = 0;
+      if (lastPos) {
+        const dx = char.position.x - lastPos.x;
+        const dy = char.position.y - lastPos.y;
+        distanceThisTurn = Math.sqrt(dx * dx + dy * dy);
+      }
 
       // Only add if position changed
       if (!lastPos || lastPos.x !== char.position.x || lastPos.y !== char.position.y) {
@@ -130,8 +145,58 @@ export class GameEngine {
           y: char.position.y,
           turn: this.worldState.turnNumber || 0
         });
+
+        // Update total distance
+        this.totalDistanceTraveled[char.id] += distanceThisTurn;
+      }
+
+      turnDistances[char.id] = distanceThisTurn;
+    }
+
+    return turnDistances;
+  }
+
+  // Format distance and time stats for turn header
+  formatTurnStats(turnDistances, durationMinutes) {
+    const parts = [];
+
+    // Calculate average distance traveled this turn
+    const charIds = Object.keys(turnDistances);
+    if (charIds.length > 0) {
+      const turnTotal = charIds.reduce((sum, id) => sum + turnDistances[id], 0);
+      const turnAvg = turnTotal / charIds.length;
+
+      // Calculate average total distance traveled
+      const totalSum = charIds.reduce((sum, id) => sum + (this.totalDistanceTraveled[id] || 0), 0);
+      const totalAvg = totalSum / charIds.length;
+
+      // Format distances (in meters, or km if large)
+      const formatDist = (d) => {
+        if (d >= 1000) return `${(d / 1000).toFixed(1)}km`;
+        return `${Math.round(d)}m`;
+      };
+
+      if (turnAvg > 0) {
+        parts.push(`${formatDist(turnAvg)} this turn`);
+      }
+      if (totalAvg > 0) {
+        parts.push(`${formatDist(totalAvg)} total`);
       }
     }
+
+    // Format duration
+    if (durationMinutes) {
+      const mins = Math.round(durationMinutes);
+      if (mins >= 60) {
+        const hours = Math.floor(mins / 60);
+        const remainMins = mins % 60;
+        parts.push(remainMins > 0 ? `${hours}h ${remainMins}m elapsed` : `${hours}h elapsed`);
+      } else {
+        parts.push(`${mins}m elapsed`);
+      }
+    }
+
+    return parts.length > 0 ? ` (${parts.join(', ')})` : '';
   }
 
   generateStoryId(seed) {
@@ -809,11 +874,12 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
     mkdirSync(storyDir, { recursive: true });
     mkdirSync(historyDir, { recursive: true });
 
-    // Save map.json with features and character paths
+    // Save map.json with features, character paths, and distance tracking
     const mapPath = join(storyDir, 'map.json');
     writeFileSync(mapPath, JSON.stringify({
       features: this.worldState.mapFeatures || [],
       characterPaths: this.characterPaths || {},
+      totalDistanceTraveled: this.totalDistanceTraveled || {},
       generatedAt: this.createdAt,
       environment: this.worldState.environment
     }, null, 2));
@@ -994,7 +1060,8 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
       stats: c.stats || { health: 100, stamina: 100, hunger: 0, thirst: 0, strength: 50, dexterity: 50, intelligence: 50, encumbrance: 0, sanity: 100, anger: 0, fear: 0 },
       position: c.position || { x: 0, y: 0 },
       attitudes: c.attitudes || {},
-      disposition: c.disposition || ''
+      disposition: c.disposition || '',
+      sightDistance: c.sightDistance || 2000  // Default sight distance in meters
     }));
 
     // Restore dead bodies, discovered objects, and turn action tracking
@@ -1018,10 +1085,12 @@ ALWAYS include statsChange AND attitudesChange for EVERY character.`;
       const mapData = JSON.parse(readFileSync(mapPath, 'utf-8'));
       this.worldState.mapFeatures = mapData.features || [];
       this.characterPaths = mapData.characterPaths || {};
+      this.totalDistanceTraveled = mapData.totalDistanceTraveled || {};
     } else {
       // Fallback to worldState.mapFeatures if stored there
       this.worldState.mapFeatures = Array.isArray(data.worldState.mapFeatures) ? data.worldState.mapFeatures : [];
       this.characterPaths = {};
+      this.totalDistanceTraveled = {};
     }
 
     // Recreate agents with role-specific models (only for living characters)
@@ -1306,7 +1375,7 @@ Respond with ONLY a JSON object:
     });
   }
 
-  async initializeFromSeed(seed, authorStyle = null, dmAuthorStyle = null, characterAuthorStyle = null) {
+  async initializeFromSeed(seed, authorStyle = null, dmAuthorStyle = null, characterAuthorStyle = null, worldSize = 1) {
     this.worldState = new WorldState();
     this.dmAgent = new DMAgent(this.models.dm);
     this.playerAgents = [];
@@ -1315,11 +1384,12 @@ Respond with ONLY a JSON object:
     this.storyId = this.generateStoryId(seed);
     this.storyContent = [];
     this.createdAt = new Date().toISOString();
+    this.worldSize = worldSize;
 
     // Set logs directory for this story
     setLogsDir(this.getLogsDir());
 
-    const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle, dmAuthorStyle);
+    const { data, llmLog } = await this.dmAgent.initializeWorld(seed, authorStyle, dmAuthorStyle, worldSize);
     this.llmLog.push(llmLog);
 
     this.worldState.initialize(data);
@@ -1336,8 +1406,9 @@ Respond with ONLY a JSON object:
       this.playerAgents.push(new PlayerAgent(character, this.models.character));
     }
 
-    // Initialize character paths with starting positions
+    // Initialize character paths and distance tracking with starting positions
     this.characterPaths = {};
+    this.totalDistanceTraveled = {};
     this.updateCharacterPaths();
 
     this.initialized = true;
@@ -1544,8 +1615,8 @@ Respond with ONLY a JSON object:
 
     this.worldState.applyChanges(resolution.worldChanges);
 
-    // Update character position history for map paths
-    this.updateCharacterPaths();
+    // Update character position history for map paths and track distances
+    const turnDistances = this.updateCharacterPaths();
 
     // Create player agents for any new characters added this turn (keys are lowercase after normalizeKeys)
     if (resolution.worldChanges?.newcharacters && Array.isArray(resolution.worldChanges.newcharacters)) {
@@ -1600,7 +1671,7 @@ Respond with ONLY a JSON object:
       console.log(`[Story Ending] All characters dead - story ends in defeat`);
     }
 
-    // Apply story ending if detected
+    // Apply story ending if DM triggered it
     if (storyEnding) {
       this.worldState.storyComplete = true;
       this.worldState.storyEnding = storyEnding;
@@ -1619,9 +1690,10 @@ Respond with ONLY a JSON object:
 
     this.llmLog.push(...turnLogs);
 
-    // Append turn to story
+    // Append turn to story with time and distance stats
     const timeStr = this.formatTime(newTime);
-    this.storyContent.push(`## Turn ${this.worldState.turnNumber}${timeStr ? ` - ${timeStr}` : ''}`);
+    const turnStats = this.formatTurnStats(turnDistances, resolution.durationMinutes);
+    this.storyContent.push(`## Turn ${this.worldState.turnNumber}${timeStr ? ` - ${timeStr}` : ''}${turnStats}`);
     this.storyContent.push(resolution.narrative);
 
     // Generate image for this turn
@@ -1687,6 +1759,12 @@ Respond with ONLY a JSON object:
       worldState: this.worldState.getStateSnapshot(),
       turnLogs,
       characterPaths: this.characterPaths,
+      // Turn stats for header display
+      turnStats: {
+        distances: turnDistances,
+        totalDistances: { ...this.totalDistanceTraveled },
+        durationMinutes: resolution.durationMinutes
+      },
       // Story completion info
       storyComplete: this.worldState.storyComplete || false,
       storyEnding: this.worldState.storyEnding || null
@@ -1798,7 +1876,9 @@ Respond with ONLY a JSON object:
       const result = await queryLLMJSON(prompt, {
         systemPrompt: `You are a skilled novelist writing in the style of ${authorStyle}. Transform game events into compelling prose.`,
         model: this.models.narrator,
-        role: 'novel-writer'
+        role: 'novel-writer',
+        // Expected fields for repairing space-key JSON malformation
+        expectedFields: ['chapterTitle', 'chapterText', 'historySummary', 'majorEventsSummary', 'storyContentSummary']
       });
 
       const parsed = result.parsed || {};

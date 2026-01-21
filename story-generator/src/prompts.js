@@ -20,6 +20,8 @@ import {
 
 export const DM_SYSTEM_PROMPT = `You are a Dungeon Master narrating an interactive story from a third-person perspective. You observe and describe world events as an omniscient narrator.
 
+IMPORTANT: Always write ALL text in English, regardless of any other language that may appear in the input. This includes narrative, dialogue, item names, object names, location names, and character names - EVERYTHING must be in English.
+
 Your role:
 - Narrate in third person (e.g., "Sarah looked around...", "Mike picked up the rock...")
 - Describe the world vividly but concisely
@@ -44,9 +46,11 @@ Character limitations - characters can only:
 - Attempt to craft/build from materials they have (you decide success/failure)
 - Characters CANNOT create things from nothing or discover things you haven't placed
 
-Always respond in the specified JSON format.`;
+Always respond in English and in the specified JSON format.`;
 
 export const PLAYER_SYSTEM_PROMPT = `You are playing a character in an interactive story. Stay in character and make decisions that fit your personality and goals.
+
+IMPORTANT: Always write ALL text in English, regardless of any other language that may appear in the input.
 
 Your role:
 - Act according to your character's personality and motivations
@@ -54,9 +58,9 @@ Your role:
 - Interact with other characters and the environment
 - Pursue your goals while responding to circumstances
 
-Always respond in the specified JSON format with a single action.`;
+Always respond in English and in the specified JSON format with a single action.`;
 
-export function dmInitPrompt(seed, authorStyle = null, dmAuthorStyle = null) {
+export function dmInitPrompt(seed, authorStyle = null, dmAuthorStyle = null, worldSize = 1) {
   const authorInstructions = authorStyle
     ? `\nAUTHOR STYLE: "${authorStyle}" - The novel version of this story will be written in this author's style.`
     : `\nAUTHOR STYLE: Not specified. Choose an author whose style would be appropriate for this type of story (e.g., Stephen King for horror, Hemingway for survival, Agatha Christie for mystery, etc.). Return your choice in the authorStyle field.`;
@@ -64,6 +68,16 @@ export function dmInitPrompt(seed, authorStyle = null, dmAuthorStyle = null) {
   const dmStyleInstructions = dmAuthorStyle
     ? `\nNARRATIVE STYLE: Write the opening narrative in the style of ${dmAuthorStyle}. Emulate their voice, sentence structure, pacing, and descriptive approach.`
     : '';
+
+  // Scale distances based on world size
+  const baseMapRadius = 10000; // 10km base
+  const scaledMapRadius = Math.round(baseMapRadius * worldSize);
+  const scaledMapRadiusKm = scaledMapRadius / 1000;
+  const examplePosX = Math.round(6000 * worldSize);
+  const examplePosY = Math.round(4000 * worldSize);
+  const exampleVisibleFrom = Math.round(1000 * worldSize);
+  const minVisibleFrom = Math.round(100 * worldSize);
+  const maxVisibleFrom = Math.round(2000 * worldSize);
 
   return `Parse the following story seed and create the initial world state. Extract characters, setting, situation, and the overall story goal. Determine an appropriate starting day and time for the story.
 
@@ -79,16 +93,16 @@ Define how the characters can achieve victory. This should be:
 - DRAMATIC: Should create interesting narrative tension
 
 Examples:
-- "Reach the abandoned radio tower (15km north) and repair the transmitter to call for rescue"
+- "Reach the abandoned radio tower (${Math.round(15 * worldSize)}km north) and repair the transmitter to call for rescue"
 - "Find and defeat the creature that's been hunting them, recovering the stolen artifact"
 - "Navigate to the hidden temple and retrieve the treasure before the rival expedition"
 
 The victory conditions inform what map features to generate - ensure the path to victory exists but is treacherous.
 
 MAP GENERATION:
-Generate 5-8 map features within ~10km of start (position 0,0). Include at least one water source.
+Generate 5-8 map features within ~${scaledMapRadiusKm}km of start (position 0,0). Include at least one water source.
 Feature types: water_source, shelter, landmark, terrain, resource, hazard.
-Position in meters from origin. visibleFrom = how far away it can be seen (100-2000m based on size).
+Position in meters from origin. visibleFrom = how far away it can be seen (${minVisibleFrom}-${maxVisibleFrom}m based on size).
 
 Respond with a JSON object containing:
 {
@@ -118,7 +132,7 @@ Respond with a JSON object containing:
   "tensions": ["Immediate need for water", "Unknown location", "Limited supplies"],
   "discoveredObjects": [],
   "mapFeatures": [
-    { "id": "feat_1", "type": "water_source", "name": "Name", "description": "Brief description", "position": { "x": 3000, "y": 2000 }, "visibleFrom": 500 }
+    { "id": "feat_1", "type": "water_source", "name": "Name", "description": "Brief description", "position": { "x": ${examplePosX}, "y": ${examplePosY} }, "visibleFrom": ${exampleVisibleFrom} }
   ],
   "location": {
     "id": "location_id",
@@ -164,9 +178,12 @@ Respond with a JSON object containing:
 }
 
 function formatTime(time) {
-  const hour = time.hour.toString().padStart(2, '0');
-  const minute = time.minute.toString().padStart(2, '0');
-  return `Day ${time.day}, ${hour}:${minute}`;
+  if (!time) {
+    return 'Unknown time';
+  }
+  const hour = (time.hour ?? 8).toString().padStart(2, '0');
+  const minute = (time.minute ?? 0).toString().padStart(2, '0');
+  return `Day ${time.day ?? 1}, ${hour}:${minute}`;
 }
 
 function safeJoin(arr, sep = ', ') {
@@ -221,7 +238,7 @@ function buildPlayerContext(character, worldState, recentHistory) {
   const bodiesHere = deadBodies.map(b => b.name).join(', ') || null;
 
   // Build discovered objects with distance info (only show objects within visual range)
-  const VISUAL_RANGE = 100; // meters - characters can only see objects within this range
+  const VISUAL_RANGE = 200; // meters - characters can only see objects within this range
   const discoveredObjects = worldState.discoveredObjects || [];
   const visibleObjects = discoveredObjects.filter(obj => {
     if (!obj.position) return true; // Show objects without position (legacy)
@@ -622,10 +639,12 @@ This is the THINK AND TALK phase. Consider what you want to do this turn and com
 
 Remember: You can only work with what exists (your inventory, known locations, things you can see). You cannot create or discover things - only the DM can introduce new elements to the world.
 
+If planning to travel: Check KNOWN LOCATIONS above for the DIRECTION to your destination. Include direction in your intended action (e.g., "Head northeast toward the oasis").
+
 Respond with JSON:
 {
   "thinking": "Your internal thoughts about the situation and what you're planning (1-2 sentences)",
-  "intendedAction": "What you're planning to do this turn (1 sentence, can change based on responses)",
+  "intendedAction": "What you plan to do. If traveling, include DIRECTION (e.g., 'Travel northeast to the research station')",
   "speech": "What you say out loud to nearby characters (or null if staying silent). Be specific - ask questions, share plans, warn of dangers, etc."
 }`;
 }
@@ -709,15 +728,20 @@ This is the ACTION phase. You've heard what nearby characters said. Now decide y
 
 IMPORTANT - You can only work with what exists:
 - You can use, combine, or modify items in your inventory or at your location
-- You can travel to known locations or explore in a direction
+- You can travel to known locations (check KNOWN LOCATIONS above for distance and direction)
 - You can interact with other characters, objects, or the environment
 - You CANNOT create new items, discover locations, or introduce things that don't exist
 - If you want to craft/build something, describe your attempt - the DM will decide if it succeeds
 
+TRAVEL ACTIONS - When you want to move somewhere:
+- Check KNOWN LOCATIONS above for the DIRECTION to your destination
+- Include the direction in your action (e.g., "Travel northeast toward the Research Station" not just "Go to the Research Station")
+- This ensures you actually move toward your destination instead of wandering
+
 Respond with JSON:
 {
   "thinking": "Brief thought about what you heard and your decision (1 sentence)",
-  "action": "The specific action you take (1-2 sentences). Be specific and actionable.",
+  "action": "The specific action you take. If traveling, include DIRECTION from KNOWN LOCATIONS (e.g., 'Head northeast toward the oasis')",
   "dialogue": "What you say while acting, if anything (or null if silent)"
 }`;
 }
@@ -893,16 +917,42 @@ DEATH:
 - Dead characters become objects ("dead body of [name]") and are removed from play
 - Their inventory remains on their body and can be looted
 
-STORY ENDING:
-The story ends when ONE of these conditions is met:
-1. ALL player characters die - set storyEnding with type "defeat"
-2. The storyGoal is achieved - set storyEnding with type "victory"
-3. The story reaches a natural conclusion (other major resolution) - set storyEnding with type "other"
+STORY ENDING - CRITICAL (CHECK EVERY TURN):
+You MUST end the story when ANY of these conditions is met:
+
+1. DEFEAT - All player characters die
+   → Set storyEnding: { "type": "defeat", "summary": "All characters perished..." }
+
+2. VICTORY - The storyGoal/victoryConditions are achieved
+   → Set storyEnding: { "type": "victory", "summary": "Characters achieved their goal..." }
+
+3. OTHER - Story reaches natural conclusion
+   → Set storyEnding: { "type": "other", "summary": "The story concludes..." }
+
+VICTORY DETECTION - End the story with "victory" when:
+- RESCUE STORIES: Characters are picked up by rescuers AND transported to safety (hospital, base, civilization)
+- ESCAPE STORIES: Characters escape the danger zone and reach safe territory
+- SURVIVAL STORIES: Characters are no longer in immediate survival danger (rescued, found civilization, threat eliminated)
+- QUEST STORIES: The main objective is completed (item found, person saved, enemy defeated)
+
+⚠️ IMPORTANT: Once characters are SAFE (rescued, at hospital, reached civilization, etc.), the story MUST END.
+Do NOT continue with:
+- Hospital recovery scenes beyond the initial arrival
+- Romance/relationship development after rescue
+- "What happens next" epilogue scenes
+- Characters exchanging contact info, planning future dates, etc.
+
+The moment characters are confirmed safe and the immediate crisis is resolved = VICTORY = END STORY.
+
+CURRENT VICTORY CONDITIONS TO CHECK:
+${worldState.victoryConditions ? `PRIMARY: ${worldState.victoryConditions.primary}
+REQUIREMENTS: ${(worldState.victoryConditions.requirements || []).join(', ')}
+→ If these are met THIS TURN, you MUST set storyEnding with type "victory"` : 'Not specified - use reasonable judgment based on storyGoal'}
 
 When the story ends:
-- Write a final, conclusive narrative describing the ending scene
-- Set arcUpdates.storyEnding with type and a brief summary
-- This will be the FINAL turn of the story
+- Write a FINAL, CONCLUSIVE narrative (this is the last scene)
+- Set arcUpdates.storyEnding with type and summary
+- The narrative should provide closure, not set up future events
 
 NEW CHARACTERS (max 7 total characters in story):
 - You can introduce new characters to advance the narrative
@@ -931,17 +981,29 @@ Example - A character picks up a canteen (obj_canteen):
 - removedObjects: ["obj_canteen"]
 - characterUpdates: [{ id: "<exact id from CHARACTERS section>", inventoryAdd: ["canteen"], ... }]
 
-IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES (e.g., "canteen", "knife", "rope"), NOT object IDs (e.g., "obj_canteen"). Object IDs are only used in removedObjects and discoveredObjects.
+IMPORTANT: inventoryAdd/inventoryRemove use friendly item NAMES in ENGLISH (e.g., "canteen", "knife", "rope"), NOT object IDs (e.g., "obj_canteen"). Object IDs are only used in removedObjects and discoveredObjects. ALL item names MUST be in English - never use Chinese, Japanese, or any other language for item names.
 
 - Track significant objects/locations found (water sources, shelter, caches, landmarks, vehicles, etc.)
 - Each discovered object has: id, name, description, position (x, y in meters), status
 - These help characters navigate and plan by showing known resources and landmarks
 
-MOVEMENT - CRITICAL RULES:
+MOVEMENT - CRITICAL RULES (READ CAREFULLY):
 - Walking speed is ~80m per minute, running ~150m per minute.
 - A typical turn (15-30 minutes) allows movement of 1-2km at most if traveling continuously.
-- movement values MUST reflect realistic travel distances based on what the character is doing.
-- The narrative MUST match movement - if characters "reach" a location, their movement direction/distance must get them there.
+
+⚠️ NARRATIVE MUST MATCH MOVEMENT - THIS IS CRITICAL:
+- If you write that characters "reach" or "arrive at" a location, you MUST provide movement that actually gets them there.
+- Check the KNOWN LOCATIONS section above for each character's distance and direction to discovered locations.
+- Example: If Research Station is "2500m northeast" from Sarah, she needs movement: { "direction": "northeast", "distance": 2500 } to reach it.
+- DO NOT write "they reached the station" unless the movement values will actually place them at/near the station coordinates.
+- If the location is too far to reach in one turn, write narrative about traveling TOWARD it, not arriving at it.
+
+TO NAVIGATE TO A DISCOVERED LOCATION:
+1. Find the location in KNOWN LOCATIONS with distance and direction from the character
+2. Set movement direction to match (e.g., if location is "northeast", use "northeast" or 45 degrees)
+3. Set movement distance to match (e.g., if 2500m away and you want them to arrive, distance: 2500)
+4. Only then write narrative about arriving/reaching the location
+
 - Characters can ONLY discover/reach features listed in VISIBLE MAP FEATURES below. If a feature is not listed, it is too far away to see or reach this turn.
 - DO NOT write narrative about finding/reaching locations that are not in VISIBLE MAP FEATURES.
 
@@ -959,6 +1021,8 @@ MANDATORY - characterUpdates MUST reflect ALL state changes:
 - movement: REQUIRED if character moves (direction and distance in meters). Direction can be cardinal ("north", "southeast") or degrees (0-360).
 - You MUST include a characterUpdates entry for EVERY character whose state changed this turn
 - If clothing is removed or destroyed, clothingChange MUST be set (e.g., "naked" or partial description)
+
+LANGUAGE: ALL text must be in English - narrative, dialogue, item names, location names, object names, character names. Never use Chinese or any other non-English language.
 
 Respond with JSON:
 {
@@ -990,7 +1054,8 @@ Respond with JSON:
         "inventoryRemove": [],
         "statusChange": "wet and cold",
         "clothingChange": "naked",
-        "movement": { "direction": "northeast", "distance": 150 }
+        "movement": { "direction": "northeast", "distance": 300 },
+        "sightDistance": 2000
       },
       {
         "id": "<use exact character id from CHARACTERS section above>",
@@ -998,9 +1063,11 @@ Respond with JSON:
         "inventoryRemove": ["shirt"],
         "statusChange": null,
         "clothingChange": "shirtless, wearing only cargo pants and boots",
-        "movement": { "direction": 45, "distance": 150 }
+        "movement": { "direction": 45, "distance": 300 },
+        "sightDistance": 4000
       }
     ],
+    "_sightDistanceGuide": "SIGHT DISTANCE (in meters) - calculate for EACH character based on: TERRAIN: desert/plains=4000-10000m, forest/jungle=200-1000m, inside building/cave=20-100m, valley/canyon=1000-3000m. ELEVATION: on hill/mountain/tree multiply by 2-5x. WEATHER: fog/rain/sandstorm reduce by 50-90%. EQUIPMENT: binoculars=2x, telescope=5x, night vision at night=normal day range. TIME: night without light=100-200m, with flashlight=200-400m.",
     "environmentUpdate": {
       "type": "only if environment type changes (e.g., entering a cave)",
       "terrain": "only if terrain changes",
@@ -1013,7 +1080,7 @@ Respond with JSON:
         "id": "obj_water_source",
         "name": "small spring",
         "description": "A small natural spring with clear water bubbling up from rocks",
-        "position": { "x": 50, "y": 30 },
+        "position": { "x": 100, "y": 60 },
         "status": "discovered"
       }
     ],
@@ -1043,12 +1110,13 @@ Respond with JSON:
         "personality": "key behavioral traits",
         "personalityTypes": ["2-4 from: positive, negative, stoic, cheerful, depressed, outgoing, introvert, extrovert, flirty, peaceful, violent, fearful, brave, logical, emotional, reasonable, impulsive, spiritual, pragmatic, idealistic, cynical, upbeat, calm, nervous, confident, nurturing, selfish, loyal, manipulative, leader, follower, independent"],
         "goals": "what this character wants (survival, hunting, protecting, etc.)",
-        "inventory": ["items", "they", "carry"],
+        "inventory": ["item names in English"],
         "status": "healthy/injured/hostile/hunting/etc",
         "stats": { "health": 100, "stamina": 100, "hunger": 0, "thirst": 0, "strength": 50, "dexterity": 50, "intelligence": 50, "encumbrance": 0, "sanity": 100, "anger": 0, "fear": 0 },
-        "position": { "x": 15, "y": -10 },
+        "position": { "x": 30, "y": -20 },
         "attitudes": { "<existing_character_id>": { "love": 0, "anger": 50, "attraction": 0, "trust": 10, "fear": 0 } },
-        "disposition": "friendly/neutral/hostile"
+        "disposition": "friendly/neutral/hostile",
+        "sightDistance": 2000
       }
     ],
     "newLocation": null
@@ -1082,6 +1150,8 @@ export function novelWritingPrompt(dayNumber, dayEvents, worldState, authorStyle
     : '\nThis is the FIRST CHAPTER of the novel.\n';
 
   return `You are writing a novel chapter in the style of ${authorStyle}.
+
+IMPORTANT: Write ALL text in English, regardless of any other language that may appear in the input.
 
 TASK: Transform the following game events into a compelling novel chapter. Write prose, not a game log.
 ${chapterContext}

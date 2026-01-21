@@ -21,6 +21,11 @@
         <div class="controls-top">
           <div class="seed-area">
             <textarea id="seed" placeholder="Enter your story seed... e.g., 'Two survivors of a plane crash in the desert. Sarah is a doctor, Mike is an engineer. They must find water and shelter.'"></textarea>
+            <div class="world-size-row">
+              <label for="world-size">World Size:</label>
+              <input type="range" id="world-size" min="0.5" max="4" step="0.5" value="1">
+              <span id="world-size-value">~12 x 12 mi (150 mi²)</span>
+            </div>
             <div id="turn-progress" class="turn-progress hidden">
               <div class="progress-spinner"></div>
               <span id="progress-text">Processing...</span>
@@ -142,12 +147,23 @@
               </defs>
               <g class="map-grid"></g>
               <g class="map-paths"></g>
+              <g class="map-sight-ranges"></g>
               <g class="map-features"></g>
               <g class="map-objects"></g>
               <g class="map-characters"></g>
               <g class="map-labels"></g>
             </svg>
             <p class="placeholder">Start a game to see map</p>
+          </div>
+          <div id="landmarks-list" class="landmarks-list hidden">
+            <div class="landmarks-visible">
+              <h4>Visible Landmarks <span id="avg-sight-distance" class="sight-distance-badge"></span></h4>
+              <ul id="visible-landmarks"></ul>
+            </div>
+            <div class="landmarks-nearby">
+              <h4>Nearby (Undiscovered)</h4>
+              <ul id="nearby-landmarks"></ul>
+            </div>
           </div>
         </div>
       </div>
